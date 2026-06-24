@@ -524,6 +524,12 @@ function refreshObjectProps() {
     i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) onInput(v); };
     return i;
   };
+  const chk = (checked, onChange) => {
+    const i = document.createElement("input");
+    i.type = "checkbox"; i.checked = !!checked;
+    i.onchange = () => { onChange(i.checked); markDirty(); ensureCompiled(); };
+    return i;
+  };
 
   const nameI = document.createElement("input");
   nameI.type = "text"; nameI.value = obj.name;
@@ -540,10 +546,13 @@ function refreshObjectProps() {
   } else if (obj.type === "satin") {
     row("Width (mm)", num(obj.params.width, 0.5, 0.5, (v) => obj.params.width = v));
     row("Density (mm)", num(obj.params.density, 0.05, 0.2, (v) => obj.params.density = v));
+    row("Pull comp. (mm)", num(obj.params.pull, 0.05, 0, (v) => obj.params.pull = v));
+    row("Underlay", chk(obj.params.underlay, (v) => obj.params.underlay = v));
   } else if (obj.type === "fill") {
     row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
     row("Stitch length (mm)", num(obj.params.stitchLength, 0.1, 1, (v) => obj.params.stitchLength = v));
     row("Angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
+    row("Underlay", chk(obj.params.underlay, (v) => obj.params.underlay = v));
   } else if (obj.type === "text") {
     const textI = document.createElement("input");
     textI.type = "text"; textI.value = obj.params.text;

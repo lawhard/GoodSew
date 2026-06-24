@@ -30,7 +30,9 @@ export function generateSatin(points, params) {
   if (points.length < 2) return [];
   const width = Math.max(0.5, params.width || 4);
   const spacing = Math.max(0.2, params.density || 0.4);
-  const half = width / 2;
+  // Pull compensation: satin draws fabric inward as it sews, narrowing the
+  // column. Widen each rail by `pull` mm to counteract it.
+  const half = width / 2 + Math.max(0, params.pull || 0);
   const total = pathLength(points);
   const steps = Math.max(2, Math.round(total / spacing));
   const out = [];
@@ -136,12 +138,36 @@ export function generateText(obj) {
 export function generateForObject(obj) {
   switch (obj.type) {
     case "running": return [generateRunning(obj.points, obj.params)];
-    case "satin":   return [generateSatin(obj.points, obj.params)];
-    case "fill":
-      if (obj.contours && obj.contours.length)
-        return [fillContours(obj.contours, obj.params)];
-      return [generateFill(obj.points, obj.params)];
+    case "satin": {
+      const subs = [];
+      // Underlay: a center run down the spine stabilizes before the satin.
+      if (obj.params.underlay) subs.push(resample(obj.points, 2.5));
+      subs.push(generateSatin(obj.points, obj.params));
+      return subs;
+    }
+    case "fill": {
+      const contours = (obj.contours && obj.contours.length) ? obj.contours : [obj.points];
+      return fillWithUnderlay(contours, obj.params);
+    }
     case "text":    return generateText(obj);
     default:        return [];
   }
+}
+
+// Fill plus optional underlay: an edge run around each contour and a coarse
+// perpendicular fill pass beneath the top tatami layer.
+function fillWithUnderlay(contours, params) {
+  const valid = contours.filter((c) => c.length >= 3);
+  if (valid.length === 0) return [];
+  const subs = [];
+  if (params.underlay) {
+    for (const c of valid) subs.push(resample([...c, c[0]], 2.5)); // edge run
+    subs.push(fillContours(valid, {
+      ...params,
+      spacing: Math.max(1.5, (params.spacing || 0.45) * 3),
+      angle: (params.angle || 0) + 90,
+    }));
+  }
+  subs.push(fillContours(valid, params));
+  return subs;
 }

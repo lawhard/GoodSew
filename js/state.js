@@ -14,7 +14,8 @@ export function defaultParams(type) {
     case "running":
       return { stitchLength: 2.5, repeats: 1 };
     case "satin":
-      return { width: 4, density: 0.4, pull: 0 }; // density = mm between zig-zag points
+      // density = mm between zig-zag points; pull = mm pull-compensation per side
+      return { width: 4, density: 0.4, pull: 0.2, underlay: true };
     case "fill":
       return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true };
     case "text":
