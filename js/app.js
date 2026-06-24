@@ -1,14 +1,16 @@
 // GoodSew — SE700 embroidery digitizer. Main application controller.
 
-import { state, makeObject, selectedObject, markDirty, serialize, deserialize } from "./state.js";
-import { HOOPS, getHoop } from "./hoop.js";
+import { state, makeObject, selectedObject, markDirty, serialize, deserialize, nextId } from "./state.js";
+import { HOOPS, getHoop, SE700 } from "./hoop.js";
 import { BROTHER_PALETTE, rgbToHex } from "./threads.js";
 import { compile } from "./compiler.js";
 import { computeStats, formatTime } from "./stats.js";
 import { exportPES } from "./export/pes.js";
-import { Camera, render } from "./render.js";
+import { Camera, render, RULER } from "./render.js";
 import { Simulator } from "./simulator.js";
-import { dist } from "./geometry.js";
+import { dist, bbox } from "./geometry.js";
+import { SHAPES, buildShape } from "./shapes.js";
+import { FONTS, loadFont, textToGlyphs } from "./fonts.js";
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -21,9 +23,13 @@ const view = {
 let compiled = null;
 let tool = "select";
 let draft = null;          // in-progress object being drawn
-let drag = null;           // { mode:'object'|'node'|'pan', ... }
+let drag = null;           // { mode:'object'|'node'|'pan'|'guide'|'shape', ... }
 let needsRender = true;
 let spaceDown = false;
+let cursor = null;         // { sx, sy } screen px of pointer
+let hoverGuide = null;     // guide under pointer (for highlight)
+let shapeKind = "rect";
+let shapeStyle = "fill";
 
 const sim = new Simulator((s) => {
   document.getElementById("sim-scrub").value = s.index;
@@ -42,7 +48,7 @@ function resize() {
   canvas.style.height = r.height + "px";
   canvas.width = Math.round(r.width * devicePixelRatio);
   canvas.height = Math.round(r.height * devicePixelRatio);
-  if (!cam._fitted) { cam.fit(getHoop(state.hoopId), r.width, r.height); cam._fitted = true; }
+  if (!cam._fitted) { cam.fit(getHoop(state.hoopId), r.width, r.height, RULER); cam._fitted = true; }
   needsRender = true;
 }
 window.addEventListener("resize", resize);
@@ -90,9 +96,39 @@ function setTool(t) {
     running: "Click to add points. Double-click or Enter to finish the path.",
     satin: "Click along the column centre. Double-click/Enter to finish.",
     fill: "Click to outline the region. Double-click/Enter to close & fill.",
+    shape: "Drag to draw the shape. Pick a kind & style on the left.",
+    text: "Click to place lettering, then edit the text & font on the right.",
   };
   document.getElementById("hud-hint").textContent = hints[t] || "";
   canvas.style.cursor = t === "select" ? "default" : "crosshair";
+  const so = document.getElementById("shape-options");
+  if (so) so.hidden = t !== "shape";
+}
+
+// Place a new text object at world point and build its glyph outlines.
+function placeText(world) {
+  const obj = makeObject("text", [world], state.activeColor);
+  obj.name = "Text";
+  state.objects.push(obj);
+  state.selectedId = obj.id;
+  buildTextGlyphs(obj);
+  setTool("select");
+  refreshObjectList(); refreshObjectProps();
+}
+
+// (Re)build cached glyph contours for a text object, then recompile.
+async function buildTextGlyphs(obj) {
+  try {
+    const font = await loadFont(obj.params.font);
+    const r = textToGlyphs(font, obj.params.text || "", obj.params.size, {
+      letterSpacing: obj.params.letterSpacing || 0,
+    });
+    obj._glyphs = r.glyphs;
+    obj._textW = r.width;
+    markDirty(); recompile(); refreshObjectList(); needsRender = true;
+  } catch (err) {
+    toast("Font load failed: " + err.message, true);
+  }
 }
 
 function startOrExtendDraft(world) {
@@ -125,18 +161,53 @@ const NODE_HIT_PX = 8;
 
 canvas.addEventListener("mousedown", (e) => {
   const world = mouseWorld(e);
+  const mx = e.offsetX, my = e.offsetY;
+
   if (e.button === 1 || spaceDown) { // middle button / space-drag pan
     drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY };
     return;
   }
+
+  // Pull a new guide out of a ruler strip.
+  if (my < RULER && mx >= RULER) {
+    const g = { id: nextId(), axis: "x", pos: world.x };
+    state.guides.push(g);
+    drag = { mode: "guide", guide: g, isNew: true };
+    return;
+  }
+  if (mx < RULER && my >= RULER) {
+    const g = { id: nextId(), axis: "y", pos: world.y };
+    state.guides.push(g);
+    drag = { mode: "guide", guide: g, isNew: true };
+    return;
+  }
+  if (mx < RULER || my < RULER) return; // corner / dead zone
+
+  // Grab an existing guide to move it.
+  const gh = guideAt(mx, my);
+  if (gh) { drag = { mode: "guide", guide: gh, isNew: false }; return; }
+
+  if (tool === "shape") {
+    const obj = makeObject(shapeStyle, [world, world], state.activeColor);
+    obj.name = SHAPES.find((s) => s.kind === shapeKind)?.label || "Shape";
+    obj.points = buildShape(shapeKind, { x: world.x, y: world.y, w: 0.1, h: 0.1 });
+    state.objects.push(obj);
+    state.selectedId = obj.id;
+    drag = { mode: "shape", obj, start: world, kind: shapeKind };
+    return;
+  }
+
+  if (tool === "text") {
+    placeText(world);
+    return;
+  }
+
   if (tool === "select") {
-    // try node of selected
     const sel = selectedObject();
     if (sel) {
       for (let i = 0; i < sel.points.length; i++) {
         const sp = cam.toScreen(sel.points[i]);
-        const mp = { x: e.offsetX, y: e.offsetY };
-        if (dist(sp, mp) <= NODE_HIT_PX) {
+        if (dist(sp, { x: mx, y: my }) <= NODE_HIT_PX) {
           drag = { mode: "node", obj: sel, index: i };
           return;
         }
@@ -156,17 +227,40 @@ canvas.addEventListener("mousedown", (e) => {
   }
 });
 
+// Find an existing guide line near screen point (mx,my), within tolerance.
+function guideAt(mx, my) {
+  const tol = 5;
+  for (const g of state.guides) {
+    if (g.axis === "x") {
+      if (my < RULER) continue;
+      if (Math.abs(cam.toScreen({ x: g.pos, y: 0 }).x - mx) <= tol) return g;
+    } else {
+      if (mx < RULER) continue;
+      if (Math.abs(cam.toScreen({ x: 0, y: g.pos }).y - my) <= tol) return g;
+    }
+  }
+  return null;
+}
+
 canvas.addEventListener("mousemove", (e) => {
   const world = mouseWorld(e);
+  cursor = { sx: e.offsetX, sy: e.offsetY };
   document.getElementById("hud-coords").textContent =
     `${world.x.toFixed(1)}, ${world.y.toFixed(1)} mm`;
+
   if (!drag) {
-    if (draft) needsRender = true; // show rubber-band
+    const gh = guideAt(e.offsetX, e.offsetY);
+    if (gh !== hoverGuide) { hoverGuide = gh; }
+    canvas.style.cursor = gh ? (gh.axis === "x" ? "ew-resize" : "ns-resize")
+      : (tool === "select" ? "default" : "crosshair");
+    needsRender = true; // keep ruler cursor markers live
     return;
   }
   if (drag.mode === "pan") {
     cam.panX = drag.panX + (e.clientX - drag.startX);
     cam.panY = drag.panY + (e.clientY - drag.startY);
+  } else if (drag.mode === "guide") {
+    drag.guide.pos = drag.guide.axis === "x" ? world.x : world.y;
   } else if (drag.mode === "node") {
     drag.obj.points[drag.index] = world;
     markDirty();
@@ -174,16 +268,44 @@ canvas.addEventListener("mousemove", (e) => {
     const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
     drag.obj.points = drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy }));
     markDirty();
+  } else if (drag.mode === "shape") {
+    const s = drag.start;
+    const box = { x: Math.min(s.x, world.x), y: Math.min(s.y, world.y),
+      w: Math.abs(world.x - s.x) || 0.1, h: Math.abs(world.y - s.y) || 0.1 };
+    drag.obj.points = buildShape(drag.kind, box);
+    markDirty();
   }
   needsRender = true;
 });
 
 window.addEventListener("mouseup", () => {
-  if (drag && (drag.mode === "node" || drag.mode === "object")) { ensureCompiled(); }
+  if (drag) {
+    const inRuler = cursor && (cursor.sx < RULER || cursor.sy < RULER);
+    if (drag.mode === "guide" && inRuler) {
+      // dropping a guide back onto a ruler removes it
+      state.guides = state.guides.filter((g) => g.id !== drag.guide.id);
+    } else if (drag.mode === "shape") {
+      const bb = bbox(drag.obj.points);
+      if (bb.w < 1 && bb.h < 1) {
+        state.objects = state.objects.filter((o) => o !== drag.obj);
+        state.selectedId = null;
+      }
+      ensureCompiled(); refreshObjectList(); refreshObjectProps();
+    } else if (drag.mode === "node" || drag.mode === "object") {
+      ensureCompiled();
+    }
+  }
   drag = null;
+  needsRender = true;
 });
 
-canvas.addEventListener("dblclick", () => finalizeDraft());
+canvas.addEventListener("dblclick", (e) => {
+  const gh = guideAt(e.offsetX, e.offsetY);
+  if (gh) { state.guides = state.guides.filter((g) => g.id !== gh.id); hoverGuide = null; needsRender = true; return; }
+  finalizeDraft();
+});
+
+canvas.addEventListener("mouseleave", () => { cursor = null; needsRender = true; });
 
 canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
@@ -205,6 +327,16 @@ function baseScale() {
   return Math.min((r.width - 80) / hoop.w, (r.height - 80) / hoop.h);
 }
 
+function textBBox(obj) {
+  if (!obj._glyphs) return null;
+  const ax = obj.points[0] ? obj.points[0].x : 0;
+  const ay = obj.points[0] ? obj.points[0].y : 0;
+  const pts = obj._glyphs.flat().flat();
+  if (!pts.length) return null;
+  const bb = bbox(pts);
+  return { minX: bb.minX + ax, minY: bb.minY + ay, maxX: bb.maxX + ax, maxY: bb.maxY + ay };
+}
+
 function hitTestObject(world) {
   // nearest object whose path passes within tolerance of the point
   const tolMm = NODE_HIT_PX / cam.pxPerMm;
@@ -212,6 +344,14 @@ function hitTestObject(world) {
   for (let i = state.objects.length - 1; i >= 0; i--) {
     const obj = state.objects[i];
     if (!obj.visible) continue;
+    if (obj.type === "text") {
+      const bb = textBBox(obj);
+      if (bb && world.x >= bb.minX - tolMm && world.x <= bb.maxX + tolMm &&
+          world.y >= bb.minY - tolMm && world.y <= bb.maxY + tolMm) {
+        return obj;
+      }
+      continue;
+    }
     for (let k = 0; k < obj.points.length; k++) {
       const d = dist(world, obj.points[k]);
       if (d < bestD) { bestD = d; best = obj; }
@@ -244,6 +384,8 @@ window.addEventListener("keydown", (e) => {
     case "r": setTool("running"); break;
     case "s": setTool("satin"); break;
     case "f": setTool("fill"); break;
+    case "h": setTool("shape"); break;
+    case "t": setTool("text"); break;
     case "enter": finalizeDraft(); break;
     case "escape": if (draft) { finalizeDraft(); } break;
     case "delete": case "backspace":
@@ -293,7 +435,7 @@ function buildHoopPicker() {
   sel.value = state.hoopId;
   sel.addEventListener("change", () => {
     state.hoopId = sel.value;
-    cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight);
+    cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
     updateHoopDims();
     needsRender = true;
   });
@@ -303,7 +445,21 @@ function buildHoopPicker() {
 function updateHoopDims() {
   const h = getHoop(state.hoopId);
   document.getElementById("hoop-dims").textContent =
-    `${h.w} × ${h.h} mm field`;
+    `${SE700.model} • ${h.w} × ${h.h} mm field • max ${SE700.maxSpeedSpm} spm`;
+}
+
+function buildShapePicker() {
+  const kind = document.getElementById("shape-kind");
+  for (const s of SHAPES) {
+    const opt = document.createElement("option");
+    opt.value = s.kind; opt.textContent = s.label;
+    kind.appendChild(opt);
+  }
+  kind.value = shapeKind;
+  kind.onchange = () => { shapeKind = kind.value; };
+  const style = document.getElementById("shape-style");
+  style.value = shapeStyle;
+  style.onchange = () => { shapeStyle = style.value; };
 }
 
 function refreshObjectList() {
@@ -345,6 +501,13 @@ function refreshObjectProps() {
     i.oninput = () => { onInput(parseFloat(i.value)); markDirty(); ensureCompiled(); };
     return i;
   };
+  // number input that delegates entirely to its callback (no auto recompile)
+  const numCb = (val, step, min, onInput) => {
+    const i = document.createElement("input");
+    i.type = "number"; i.value = val; i.step = step; if (min != null) i.min = min;
+    i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) onInput(v); };
+    return i;
+  };
 
   const nameI = document.createElement("input");
   nameI.type = "text"; nameI.value = obj.name;
@@ -365,6 +528,33 @@ function refreshObjectProps() {
     row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
     row("Stitch length (mm)", num(obj.params.stitchLength, 0.1, 1, (v) => obj.params.stitchLength = v));
     row("Angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
+  } else if (obj.type === "text") {
+    const textI = document.createElement("input");
+    textI.type = "text"; textI.value = obj.params.text;
+    textI.oninput = () => { obj.params.text = textI.value; buildTextGlyphs(obj); };
+    row("Text", textI);
+
+    const fontSel = document.createElement("select");
+    fontSel.className = "select";
+    for (const f of FONTS) {
+      const opt = document.createElement("option");
+      opt.value = f.name; opt.textContent = `${f.name} — ${f.category}`;
+      fontSel.appendChild(opt);
+    }
+    fontSel.value = obj.params.font;
+    fontSel.onchange = () => { obj.params.font = fontSel.value; buildTextGlyphs(obj); };
+    row("Font", fontSel);
+
+    const rebuild = (v, set) => { set(v); buildTextGlyphs(obj); };
+    row("Height (mm)", numCb(obj.params.size, 1, 3, (v) => rebuild(v, (x) => obj.params.size = x)));
+    row("Letter spacing (mm)", numCb(obj.params.letterSpacing, 0.2, -5, (v) => rebuild(v, (x) => obj.params.letterSpacing = x)));
+    row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
+    row("Fill angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
+
+    const outI = document.createElement("input");
+    outI.type = "checkbox"; outI.checked = !!obj.params.outline;
+    outI.onchange = () => { obj.params.outline = outI.checked; markDirty(); ensureCompiled(); };
+    row("Outline pass", outI);
   }
 
   const del = document.createElement("button");
@@ -440,7 +630,7 @@ document.getElementById("file-json").onchange = (e) => {
     try {
       deserialize(reader.result);
       buildHoopPicker(); ensureCompiled(); refreshObjectList(); refreshObjectProps();
-      cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight);
+      cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
       toast("Project loaded");
     } catch (err) { toast("Could not load file: " + err.message, true); }
   };
@@ -485,8 +675,7 @@ function toast(msg, isError) {
 function frame() {
   if (needsRender) {
     ensureCompiled();
-    // draft rubber band: include cursor handled by overlay automatically
-    render(ctx, state, compiled, sim, { cam, view });
+    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide });
     needsRender = false;
   }
   requestAnimationFrame(frame);
@@ -496,6 +685,7 @@ function frame() {
 function boot() {
   buildThreadPicker();
   buildHoopPicker();
+  buildShapePicker();
   setTool("select");
   resize();
   recompile();
@@ -503,26 +693,39 @@ function boot() {
   refreshObjectProps();
   seedDemo();
   frame();
+
+  // Lightweight debug hook used by the e2e test harness.
+  window.__gs = {
+    state,
+    setTool,
+    compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
+    exportBytes: () => { ensureCompiled(); return exportPES(compiled, "GoodSew"); },
+  };
 }
 
-// A tiny starter design so the canvas isn't empty on first load.
+// A starter design so the canvas isn't empty on first load — also showcases
+// shapes, fills and lettering within the SE700's 100×100 mm field.
 function seedDemo() {
   if (state.objects.length) return;
-  const cx = getHoop(state.hoopId).w / 2, cy = 40;
-  const heart = [];
-  for (let a = 0; a <= 360; a += 12) {
-    const t = (a * Math.PI) / 180;
-    const x = 16 * Math.pow(Math.sin(t), 3);
-    const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
-    heart.push({ x: cx + x, y: cy + y });
-  }
-  const fill = makeObject("fill", heart, rgbToHex([237, 23, 31]));
-  fill.name = "Heart fill";
-  const outline = makeObject("running", heart, rgbToHex([0, 0, 0]));
-  outline.name = "Heart outline";
-  outline.params.stitchLength = 2;
-  state.objects.push(fill, outline);
+  const cx = getHoop(state.hoopId).w / 2;
+
+  // gold star
+  const star = makeObject("fill", buildShape("star5", { x: cx - 22, y: 16, w: 44, h: 44 }), rgbToHex([254, 186, 53]));
+  star.name = "Star";
+  star.params.angle = 30;
+  const starOutline = makeObject("running", buildShape("star5", { x: cx - 22, y: 16, w: 44, h: 44 }), rgbToHex([209, 92, 0]));
+  starOutline.name = "Star outline";
+
+  // lettering
+  const text = makeObject("text", [{ x: cx - 26, y: 82 }], rgbToHex([14, 31, 124]));
+  text.name = "SE700";
+  text.params.text = "SE700";
+  text.params.font = "Anton";
+  text.params.size = 15;
+
+  state.objects.push(star, starOutline, text);
   markDirty(); recompile(); refreshObjectList();
+  buildTextGlyphs(text);
 }
 
 window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; });

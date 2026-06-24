@@ -5,3 +5,6 @@ node_modules/
 
 chrome-headless-shell/
 scratch-shot.png
+scratch-e2e.png
+package.json
+package-lock.json

@@ -1,9 +1,9 @@
 // Statistics over a compiled plan: counts, dimensions, run-time estimate.
 
-// The SE700 stitches at roughly 400–650 spm. We model an effective average that
-// accounts for accel/decel, plus fixed time penalties for color changes and
-// trims (machine pauses / operator thread changes).
-const EFFECTIVE_SPM = 550;          // stitches per minute, sustained
+// The Brother SE700 tops out at 710 spm. Sustained throughput is lower once
+// accel/decel and direction changes are included; we model an effective average
+// plus fixed penalties for color changes and trims (pauses / rethreading).
+const EFFECTIVE_SPM = 600;          // stitches per minute, sustained
 const COLOR_CHANGE_SECONDS = 18;    // pause + rethread allowance per change
 const TRIM_SECONDS = 1.2;           // automatic trim cycle
 

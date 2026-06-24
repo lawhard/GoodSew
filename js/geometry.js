@@ -108,6 +108,49 @@ export function scanlineIntersections(polygon, yc) {
   return xs;
 }
 
+// Scanline intersections of y=yc across MANY contours (even-odd fill rule).
+export function contoursScanline(contours, yc) {
+  const xs = [];
+  for (const poly of contours) {
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const yi = poly[i].y, yj = poly[j].y;
+      if ((yi <= yc && yj > yc) || (yj <= yc && yi > yc)) {
+        const t = (yc - yi) / (yj - yi);
+        xs.push(poly[i].x + t * (poly[j].x - poly[i].x));
+      }
+    }
+  }
+  xs.sort((a, b) => a - b);
+  return xs;
+}
+
+// Bounding box over a set of contours.
+export function contoursBBox(contours) {
+  return bbox(contours.flat());
+}
+
+// Flatten a cubic bezier into `steps` line points (excludes start, includes end).
+export function flattenCubic(p0, p1, p2, p3, steps) {
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    const a = mt * mt * mt, b = 3 * mt * mt * t, c = 3 * mt * t * t, d = t * t * t;
+    out.push({ x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y });
+  }
+  return out;
+}
+
+// Flatten a quadratic bezier into `steps` line points (excludes start, includes end).
+export function flattenQuad(p0, p1, p2, steps) {
+  const out = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    const a = mt * mt, b = 2 * mt * t, c = t * t;
+    out.push({ x: a * p0.x + b * p1.x + c * p2.x, y: a * p0.y + b * p1.y + c * p2.y });
+  }
+  return out;
+}
+
 export function rotatePoint(p, center, angleRad) {
   const c = Math.cos(angleRad), s = Math.sin(angleRad);
   const dx = p.x - center.x, dy = p.y - center.y;

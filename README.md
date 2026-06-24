@@ -1,9 +1,13 @@
 # GoodSew — Brother SE700 Embroidery Digitizer
 
-A fully in-browser embroidery digitizing studio for the **Brother SE700**. Draw
-vector shapes, turn them into real machine stitches, watch the design sew out in
-a simulator, and export a `.pes` file the machine can read — all client-side,
-with no build step and no server.
+A fully in-browser embroidery digitizing studio built **exclusively for the
+Brother SE700**. Draw shapes and lettering, turn them into real machine stitches,
+watch the design sew out in a simulator, and export a `.pes` file the machine can
+read — all client-side, with no build step and no server.
+
+The whole app is tied to the SE700's real capabilities: a **4" × 4"
+(100 × 100 mm)** embroidery field and a **710 spm** maximum speed (used in the
+run-time estimate). Designs that exceed the field are flagged before export.
 
 ![tool: vanilla JS + Canvas](https://img.shields.io/badge/stack-vanilla%20JS%20%2B%20Canvas-blue)
 
@@ -29,8 +33,20 @@ recommended so ES modules load cleanly.)
   width and density.
 - **Tatami fill** — parallel-row fill of a closed region with adjustable row
   spacing, stitch length and angle, using a boustrophedon traversal and a
-  brick-offset stitch phase for a natural tatami texture.
+  brick-offset stitch phase for a natural tatami texture. Handles **holes**
+  (multi-contour even-odd) so letters and rings fill correctly.
+- **Shapes** — rectangle, rounded rectangle, ellipse/circle, triangle, diamond,
+  pentagon, hexagon, 5/6-point stars, heart and line. Drag to draw; each becomes
+  an editable filled or outlined object.
+- **Lettering** — a suite of 11 embroidery-friendly fonts (sans, slab, serif,
+  script, display) rendered to true glyph outlines (via opentype.js) and filled
+  as tatami, with adjustable height, letter spacing, fill angle and an optional
+  outline pass. Each glyph is trimmed/jumped independently.
 - **Background image tracing** — import any image and trace over it.
+- **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
+  zoom/pan, a live cursor position marker, and draggable guide lines: pull a
+  vertical guide from the top ruler or a horizontal guide from the left ruler;
+  drag a guide back onto a ruler (or double-click it) to remove it.
 - Select / move / reshape objects, per-object visibility, and a layer list that
   defines stitch order.
 
@@ -63,10 +79,10 @@ specification:
 Colours snap to the nearest of the 64 standard Brother embroidery threads, and the
 export warns if the design exceeds the selected hoop field.
 
-### Hoops
-- 5"×7" (130×180 mm) — the SE700's large frame
-- 4"×4" (100×100 mm)
-- 1"×2.5" (24×64 mm) small frame
+### Embroidery field
+- 4" × 4" (100 × 100 mm) — the Brother SE700's single embroidery hoop and
+  maximum machine area. The canvas, export bounds check and rulers are all keyed
+  to this field.
 
 ## Project files (`.gsew`)
 Save/Open stores your editable vector design as JSON so you can keep refining it.
@@ -81,27 +97,38 @@ js/
   app.js               controller: tools, interaction, panels, export wiring
   state.js             design data model + serialization
   geometry.js          vector math (resample, scanline, rotate, hit-test)
-  stitches.js          running / satin / tatami-fill generators
+  stitches.js          running / satin / tatami-fill (multi-contour) generators
+  shapes.js            shape preset outline polygons
+  fonts.js             font catalog + text → glyph-contour conversion
   compiler.js          objects → ordered stitch plan (order, jumps, trims, colors)
-  stats.js             stitch/jump/trim counts + run-time estimate
+  stats.js             stitch/jump/trim counts + run-time estimate (710 spm)
   threads.js           Brother 64-colour palette + nearest-colour matching
-  hoop.js              SE700 hoop definitions
-  render.js            Canvas: hoop, grid, image, stitches, jumps, needle head
+  hoop.js              SE700 capabilities (100×100 mm field, 710 spm)
+  render.js            Canvas: rulers, guides, hoop, grid, stitches, needle head
   simulator.js         stitch-out playback engine
   export/pes.js        byte-accurate PES v1 + PEC writer
+vendor/opentype.min.js     opentype.js (MIT) — glyph outline parsing
+fonts/*.ttf                bundled OFL fonts (see fonts/NOTICE.md)
 docs/pes-format-notes.md   the format spec the writer follows
-test/pipeline.test.mjs     headless compile → stats → PES round-trip test
+test/*.test.mjs, test/ui.e2e.mjs   automated tests
 ```
 
 ## Tests
 
 ```bash
-node test/pipeline.test.mjs
+node test/pipeline.test.mjs   # compile → stats → PES, decode PEC round-trip
+node test/text.test.mjs       # font → glyph contours (with holes) → fill stitches
+node test/ui.e2e.mjs          # real-browser: rulers, guides, shapes, text, export
 ```
 
-Compiles a multi-colour design, checks the stitch plan and statistics, exports a
-PES file, and decodes the PEC stitch stream back to confirm the bounding box
-round-trips (validates the delta encoder).
+- **pipeline** — compiles a multi-colour design, checks the stitch plan and
+  statistics, exports a PES file, and decodes the PEC stitch stream back to
+  confirm the bounding box round-trips (validates the delta encoder).
+- **text** — loads a font, converts text to glyph contours (verifying letter
+  counters become holes), and fills it to stitches.
+- **e2e** — drives the app in headless Chrome to verify draggable ruler guides,
+  shape drawing, text placement and PES export with no console errors. Requires
+  a local static server on :8137 and `puppeteer-core` (`npm i puppeteer-core`).
 
 ## Disclaimer
 Always preview a new design on stabilizer/scrap before stitching on your final

@@ -46,36 +46,32 @@ export function compile() {
       push(prev ? prev.x : 0, prev ? prev.y : 0, "color", ci);
     }
 
-    let first = true;
     for (const obj of block.objects) {
-      const pts = generateForObject(obj);
-      if (pts.length === 0) continue;
-
-      // Move the needle to this sub-path's start.
-      if (prev === null) {
-        // very first stitch of the design — position with a jump
-        for (const p of splitMove({ x: pts[0].x, y: pts[0].y }, pts[0], MAX_MOVE_MM)) {
-          push(p.x, p.y, "jump", ci);
-        }
-        push(pts[0].x, pts[0].y, "stitch", ci);
-      } else {
-        const gap = dist(prev, pts[0]);
-        if (gap > TRIM_GAP_MM) {
-          // Disjoint sub-path: trim then jump across.
-          push(prev.x, prev.y, "trim", ci);
-          for (const p of splitMove(prev, pts[0], MAX_MOVE_MM)) push(p.x, p.y, "jump", ci);
+      const subpaths = generateForObject(obj).filter((sp) => sp && sp.length >= 2);
+      for (const pts of subpaths) {
+        // Move the needle to this sub-path's start.
+        if (prev === null) {
+          // very first stitch of the design — position with a jump
+          push(pts[0].x, pts[0].y, "jump", ci);
           push(pts[0].x, pts[0].y, "stitch", ci);
         } else {
-          // Close enough to walk there with stitches.
-          for (const p of splitMove(prev, pts[0], MAX_STITCH_MM)) push(p.x, p.y, "stitch", ci);
+          const gap = dist(prev, pts[0]);
+          if (gap > TRIM_GAP_MM) {
+            // Disjoint sub-path: trim then jump across.
+            push(prev.x, prev.y, "trim", ci);
+            for (const p of splitMove(prev, pts[0], MAX_MOVE_MM)) push(p.x, p.y, "jump", ci);
+            push(pts[0].x, pts[0].y, "stitch", ci);
+          } else {
+            // Close enough to walk there with stitches.
+            for (const p of splitMove(prev, pts[0], MAX_STITCH_MM)) push(p.x, p.y, "stitch", ci);
+          }
         }
-      }
-      first = false;
 
-      // Emit the body of the sub-path, splitting any over-long segments.
-      for (let i = 1; i < pts.length; i++) {
-        for (const p of splitMove(pts[i - 1], pts[i], MAX_STITCH_MM)) {
-          push(p.x, p.y, "stitch", ci);
+        // Emit the body of the sub-path, splitting any over-long segments.
+        for (let i = 1; i < pts.length; i++) {
+          for (const p of splitMove(pts[i - 1], pts[i], MAX_STITCH_MM)) {
+            push(p.x, p.y, "stitch", ci);
+          }
         }
       }
     }

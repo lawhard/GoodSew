@@ -4,16 +4,18 @@
 import { getHoop } from "./hoop.js";
 import { generateForObject } from "./stitches.js";
 
+export const RULER = 22; // px width of the ruler strips
+
 export class Camera {
   constructor() { this.pxPerMm = 3; this.panX = 0; this.panY = 0; }
-  // Fit a hoop (centered at 0,0 in mm world... actually hoop spans 0..w) to canvas.
-  fit(hoop, cw, ch) {
-    const margin = 40;
-    const sx = (cw - margin * 2) / hoop.w;
-    const sy = (ch - margin * 2) / hoop.h;
-    this.pxPerMm = Math.min(sx, sy);
-    this.panX = (cw - hoop.w * this.pxPerMm) / 2;
-    this.panY = (ch - hoop.h * this.pxPerMm) / 2;
+  // Fit the hoop (spans 0..w, 0..h in mm) into the canvas, inside the rulers.
+  fit(hoop, cw, ch, ruler = 0) {
+    const margin = 28;
+    const availW = cw - ruler - margin * 2;
+    const availH = ch - ruler - margin * 2;
+    this.pxPerMm = Math.min(availW / hoop.w, availH / hoop.h);
+    this.panX = ruler + margin + (availW - hoop.w * this.pxPerMm) / 2;
+    this.panY = ruler + margin + (availH - hoop.h * this.pxPerMm) / 2;
   }
   toScreen(p) { return { x: p.x * this.pxPerMm + this.panX, y: p.y * this.pxPerMm + this.panY }; }
   toWorld(p) { return { x: (p.x - this.panX) / this.pxPerMm, y: (p.y - this.panY) / this.pxPerMm }; }
@@ -89,6 +91,9 @@ export function render(ctx, state, compiled, sim, opts) {
   // Draw vector object outlines + nodes (editing aids).
   drawObjectOverlays(ctx, cam, state, view);
 
+  // Guide lines (drawn over the design, under the rulers).
+  drawGuides(ctx, cam, state, cw, ch, opts.hoverGuide);
+
   // Live needle head.
   if (simActive && upto > 0) {
     const cur = compiled.plan[Math.min(upto - 1, compiled.plan.length - 1)];
@@ -102,7 +107,87 @@ export function render(ctx, state, compiled, sim, opts) {
     }
   }
 
+  // Rulers + cursor markers on top of everything.
+  drawRulers(ctx, cam, cw, ch, opts.cursor);
+
   ctx.restore();
+}
+
+function drawGuides(ctx, cam, state, cw, ch, hoverGuide) {
+  for (const g of state.guides) {
+    const isHover = hoverGuide && hoverGuide.id === g.id;
+    ctx.strokeStyle = isHover ? "#3fe0c8" : "rgba(45,200,180,0.7)";
+    ctx.lineWidth = isHover ? 1.6 : 1;
+    ctx.setLineDash([7, 4]);
+    ctx.beginPath();
+    if (g.axis === "x") {
+      const sx = cam.toScreen({ x: g.pos, y: 0 }).x;
+      ctx.moveTo(sx, RULER); ctx.lineTo(sx, ch);
+    } else {
+      const sy = cam.toScreen({ x: 0, y: g.pos }).y;
+      ctx.moveTo(RULER, sy); ctx.lineTo(cw, sy);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+// Choose a "nice" mm step so labels are ~60px apart.
+function niceStep(pxPerMm) {
+  const target = 60 / pxPerMm; // mm per label
+  const steps = [1, 2, 5, 10, 20, 25, 50, 100];
+  for (const s of steps) if (s >= target) return s;
+  return 100;
+}
+
+function drawRulers(ctx, cam, cw, ch, cursor) {
+  const step = niceStep(cam.pxPerMm);
+  const minor = step / (step >= 10 ? 10 : 5);
+  ctx.fillStyle = "#1c2330";
+  ctx.fillRect(RULER, 0, cw - RULER, RULER);  // top
+  ctx.fillRect(0, RULER, RULER, ch - RULER);  // left
+  ctx.fillStyle = "#11151c";
+  ctx.fillRect(0, 0, RULER, RULER);           // corner
+  ctx.strokeStyle = "#2a3340"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(RULER, RULER); ctx.lineTo(cw, RULER);
+  ctx.moveTo(RULER, RULER); ctx.lineTo(RULER, ch);
+  ctx.stroke();
+
+  ctx.font = "9px -apple-system, sans-serif";
+  ctx.fillStyle = "#8a96a6";
+  ctx.textBaseline = "alphabetic";
+
+  // top ruler: world x where screen x in [RULER, cw]
+  const wx0 = cam.toWorld({ x: RULER, y: 0 }).x;
+  const wx1 = cam.toWorld({ x: cw, y: 0 }).x;
+  for (let mm = Math.ceil(wx0 / minor) * minor; mm <= wx1; mm += minor) {
+    const sx = cam.toScreen({ x: mm, y: 0 }).x;
+    const major = Math.abs(mm % step) < 1e-6;
+    ctx.strokeStyle = "#3a4656";
+    ctx.beginPath(); ctx.moveTo(sx, RULER); ctx.lineTo(sx, RULER - (major ? 8 : 4)); ctx.stroke();
+    if (major) ctx.fillText(String(Math.round(mm)), sx + 2, 9);
+  }
+  // left ruler
+  const wy0 = cam.toWorld({ x: 0, y: RULER }).y;
+  const wy1 = cam.toWorld({ x: 0, y: ch }).y;
+  for (let mm = Math.ceil(wy0 / minor) * minor; mm <= wy1; mm += minor) {
+    const sy = cam.toScreen({ x: 0, y: mm }).y;
+    const major = Math.abs(mm % step) < 1e-6;
+    ctx.strokeStyle = "#3a4656";
+    ctx.beginPath(); ctx.moveTo(RULER, sy); ctx.lineTo(RULER - (major ? 8 : 4), sy); ctx.stroke();
+    if (major) {
+      ctx.save(); ctx.translate(9, sy - 2); ctx.rotate(-Math.PI / 2);
+      ctx.fillText(String(Math.round(mm)), 0, 0); ctx.restore();
+    }
+  }
+
+  // cursor position markers
+  if (cursor) {
+    ctx.fillStyle = "#ff3b6b";
+    if (cursor.sx >= RULER) ctx.fillRect(cursor.sx - 0.5, 0, 1.5, RULER);
+    if (cursor.sy >= RULER) ctx.fillRect(0, cursor.sy - 0.5, RULER, 1.5);
+  }
 }
 
 function drawGrid(ctx, cam, hoop, o, fw, fh) {
@@ -165,6 +250,31 @@ function drawObjectOverlays(ctx, cam, state, view) {
   for (const obj of state.objects) {
     if (!obj.visible) continue;
     const selected = obj.id === state.selectedId;
+
+    // Text: draw glyph outlines (offset by the anchor point).
+    if (obj.type === "text" && obj._glyphs) {
+      const ax = obj.points[0] ? obj.points[0].x : 0;
+      const ay = obj.points[0] ? obj.points[0].y : 0;
+      ctx.strokeStyle = selected ? "rgba(255,59,107,0.85)" : "rgba(0,0,0,0.3)";
+      ctx.lineWidth = 1;
+      for (const contours of obj._glyphs) {
+        for (const c of contours) {
+          ctx.beginPath();
+          c.forEach((p, i) => {
+            const sp = cam.toScreen({ x: p.x + ax, y: p.y + ay });
+            i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y);
+          });
+          ctx.closePath(); ctx.stroke();
+        }
+      }
+      if (selected && obj.points[0]) {
+        const sp = cam.toScreen(obj.points[0]);
+        ctx.fillStyle = "#ff3b6b";
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, 3.5, 0, Math.PI * 2); ctx.fill();
+      }
+      continue;
+    }
+
     if (obj.points.length >= 1) {
       if (selected || view.showPoints) {
         ctx.strokeStyle = selected ? "rgba(255,59,107,0.9)" : "rgba(0,0,0,0.25)";

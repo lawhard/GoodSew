@@ -1,10 +1,19 @@
-// Hoop / embroidery field definitions. Dimensions in mm.
-// The Brother SE700 ships with a 5"x7" frame (130 x 180 mm field).
+// Brother SE700 capabilities. This software targets the SE700 exclusively.
+//
+// Confirmed embroidery field: 4" x 4" = 100 x 100 mm (Brother SE700 ships with a
+// single 4"x4" embroidery hoop; the machine's maximum embroidery area is 100mm).
+// Max sewing/embroidery speed: 710 spm.
 
+export const SE700 = {
+  model: "Brother SE700",
+  field: { w: 100, h: 100 },   // mm — the hard machine limit
+  maxSpeedSpm: 710,
+  hoopName: '4"×4" (100×100 mm)',
+};
+
+// Kept as a list for the (single-entry) selector and forward compatibility.
 export const HOOPS = [
-  { id: "se700-5x7", name: 'SE700 5"×7" (130×180 mm)', w: 130, h: 180 },
-  { id: "se700-4x4", name: 'SE700 4"×4" (100×100 mm)', w: 100, h: 100 },
-  { id: "se700-1x2.5", name: 'Small 1"×2.5" (24×64 mm)', w: 24, h: 64 },
+  { id: "se700", name: `SE700 ${SE700.hoopName}`, w: SE700.field.w, h: SE700.field.h },
 ];
 
 export function getHoop(id) {

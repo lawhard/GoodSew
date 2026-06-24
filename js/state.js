@@ -17,6 +17,12 @@ export function defaultParams(type) {
       return { width: 4, density: 0.4, pull: 0 }; // density = mm between zig-zag points
     case "fill":
       return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true };
+    case "text":
+      return {
+        text: "Text", font: "Anton", size: 16, letterSpacing: 0,
+        spacing: 0.4, stitchLength: 2.5, angle: 0,
+        outline: false, outlineLen: 2.0,
+      };
     default:
       return {};
   }
@@ -36,8 +42,9 @@ export function makeObject(type, points, color = "#1f3f7c") {
 }
 
 export const state = {
-  hoopId: "se700-5x7",
+  hoopId: "se700",
   objects: [],
+  guides: [],            // [{ id, axis:'x'|'y', pos }]  x=vertical line, y=horizontal
   selectedId: null,
   activeColor: "#1f3f7c",
   // background tracing image
@@ -63,7 +70,13 @@ export function markDirty() {
 export function colorBlocks() {
   const blocks = [];
   for (const obj of state.objects) {
-    if (!obj.visible || obj.points.length < 2) continue;
+    if (!obj.visible) continue;
+    // text validity depends on its cached glyphs, not its anchor point count
+    if (obj.type === "text") {
+      if (!obj._glyphs || obj._glyphs.length === 0) continue;
+    } else if (obj.points.length < 2) {
+      continue;
+    }
     const last = blocks[blocks.length - 1];
     if (last && last.color === obj.color) {
       last.objects.push(obj);
@@ -81,8 +94,9 @@ function hexToArr(hex) {
 
 export function serialize() {
   return JSON.stringify({
-    version: 1,
-    hoopId: state.hoopId,
+    version: 2,
+    hoopId: "se700",
+    guides: state.guides,
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
       points: o.points, params: o.params, visible: o.visible,
@@ -92,7 +106,8 @@ export function serialize() {
 
 export function deserialize(json) {
   const data = typeof json === "string" ? JSON.parse(json) : json;
-  state.hoopId = data.hoopId || "se700-5x7";
+  state.hoopId = "se700"; // this build targets the SE700 only
+  state.guides = data.guides || [];
   state.objects = (data.objects || []).map((o) => ({
     id: nextId(),
     type: o.type,

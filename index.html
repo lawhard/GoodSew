@@ -33,6 +33,16 @@
         <button class="tool" data-tool="running" title="Running stitch path (R)">／<span>Run</span></button>
         <button class="tool" data-tool="satin" title="Satin column — draw center spine (S)">▤<span>Satin</span></button>
         <button class="tool" data-tool="fill" title="Fill region polygon (F)">▦<span>Fill</span></button>
+        <button class="tool" data-tool="shape" title="Draw a shape (H)">◆<span>Shape</span></button>
+        <button class="tool" data-tool="text" title="Add lettering (T)">T<span>Text</span></button>
+      </div>
+      <div class="tool-group" id="shape-options" hidden>
+        <div class="group-label">Shape</div>
+        <select id="shape-kind" class="select"></select>
+        <select id="shape-style" class="select">
+          <option value="fill">Filled</option>
+          <option value="running">Outline</option>
+        </select>
       </div>
       <div class="tool-group">
         <div class="group-label">Thread</div>
@@ -110,6 +120,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="vendor/opentype.min.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
