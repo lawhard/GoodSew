@@ -43,9 +43,10 @@ recommended so ES modules load cleanly.)
   as tatami, with adjustable height, letter spacing, fill angle and an optional
   outline pass. Each glyph is trimmed/jumped independently.
 - **Product preview** — see the design composited at *true physical scale* onto
-  a medium t-shirt (left chest), shoe, towel, bath mat, or a custom rectangle
-  whose dimensions you type in, so you can judge real size and placement before
-  stitching.
+  a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom
+  rectangle whose dimensions you type in. Each mockup is drawn to real-world
+  proportions, so the same design correctly reads tiny on a towel and prominent
+  on a small swatch — a faithful sense of size and placement before stitching.
 - **Background image tracing** — import any image and trace over it.
 - **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
   zoom/pan, a live cursor position marker, and draggable guide lines: pull a

@@ -1,0 +1,39 @@
+name: Deploy GoodSew to GitHub Pages
+
+# Builds a live, shareable preview of the app. GoodSew is a static site (no
+# build step), so we just publish the repo contents to GitHub Pages.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/se700-embroidery-digitizer-64vu3y
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
