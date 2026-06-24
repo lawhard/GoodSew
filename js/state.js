@@ -43,6 +43,7 @@ export function makeObject(type, points, color = "#1f3f7c") {
 
 export const state = {
   hoopId: "se700",
+  units: "in",           // 'in' (default) | 'mm' — display only; model is mm
   objects: [],
   guides: [],            // [{ id, axis:'x'|'y', pos }]  x=vertical line, y=horizontal
   selectedId: null,
@@ -96,6 +97,7 @@ export function serialize() {
   return JSON.stringify({
     version: 2,
     hoopId: "se700",
+    units: state.units,
     guides: state.guides,
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
@@ -107,6 +109,7 @@ export function serialize() {
 export function deserialize(json) {
   const data = typeof json === "string" ? JSON.parse(json) : json;
   state.hoopId = "se700"; // this build targets the SE700 only
+  state.units = data.units === "mm" ? "mm" : "in";
   state.guides = data.guides || [];
   state.objects = (data.objects || []).map((o) => ({
     id: nextId(),

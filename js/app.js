@@ -11,6 +11,7 @@ import { Simulator } from "./simulator.js";
 import { dist, bbox } from "./geometry.js";
 import { SHAPES, buildShape } from "./shapes.js";
 import { FONTS, loadFont, textToGlyphs } from "./fonts.js";
+import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -75,7 +76,7 @@ function refreshStats() {
   document.getElementById("stat-jumps").textContent = st.jumps;
   document.getElementById("stat-trims").textContent = st.trims;
   document.getElementById("stat-dims").textContent =
-    st.width > 0 ? `${st.width.toFixed(1)} × ${st.height.toFixed(1)} mm` : "—";
+    st.width > 0 ? `${fmt(st.width, state.units)} × ${fmt(st.height, state.units)}` : "—";
   document.getElementById("stat-time").textContent = formatTime(st.seconds);
 }
 
@@ -246,7 +247,7 @@ canvas.addEventListener("mousemove", (e) => {
   const world = mouseWorld(e);
   cursor = { sx: e.offsetX, sy: e.offsetY };
   document.getElementById("hud-coords").textContent =
-    `${world.x.toFixed(1)}, ${world.y.toFixed(1)} mm`;
+    `${fmt(world.x, state.units)}, ${fmt(world.y, state.units)}`;
 
   if (!drag) {
     const gh = guideAt(e.offsetX, e.offsetY);
@@ -444,8 +445,22 @@ function buildHoopPicker() {
 
 function updateHoopDims() {
   const h = getHoop(state.hoopId);
+  // Show the field in both units — Brother labels it "4 inch" but the true
+  // stitchable area is exactly 100 mm (≈ 3.94"), so be transparent.
   document.getElementById("hoop-dims").textContent =
-    `${SE700.model} • ${h.w} × ${h.h} mm field • max ${SE700.maxSpeedSpm} spm`;
+    `${SE700.model} • field ${fmt(h.w, "in")} × ${fmt(h.h, "in")} (${h.w} × ${h.h} mm) • max ${SE700.maxSpeedSpm} spm`;
+}
+
+function buildUnitToggle() {
+  const wrap = document.getElementById("unit-toggle");
+  const sync = () => wrap.querySelectorAll(".unit-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.unit === state.units));
+  wrap.querySelectorAll(".unit-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      state.units = b.dataset.unit;
+      sync(); updateHoopDims(); refreshStats(); refreshObjectProps(); needsRender = true;
+    }));
+  sync();
 }
 
 function buildShapePicker() {
@@ -546,8 +561,12 @@ function refreshObjectProps() {
     row("Font", fontSel);
 
     const rebuild = (v, set) => { set(v); buildTextGlyphs(obj); };
-    row("Height (mm)", numCb(obj.params.size, 1, 3, (v) => rebuild(v, (x) => obj.params.size = x)));
-    row("Letter spacing (mm)", numCb(obj.params.letterSpacing, 0.2, -5, (v) => rebuild(v, (x) => obj.params.letterSpacing = x)));
+    const u = state.units;
+    const heightStep = u === "in" ? 0.05 : 1;
+    row(`Height (${u})`, numCb(toUnit(obj.params.size, u), heightStep, 0.05,
+      (v) => rebuild(v, () => obj.params.size = fromUnit(v, u))));
+    row(`Letter spacing (${u})`, numCb(toUnit(obj.params.letterSpacing, u), u === "in" ? 0.02 : 0.2, null,
+      (v) => rebuild(v, () => obj.params.letterSpacing = fromUnit(v, u))));
     row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
     row("Fill angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
 
@@ -675,7 +694,7 @@ function toast(msg, isError) {
 function frame() {
   if (needsRender) {
     ensureCompiled();
-    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide });
+    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, unit: UNITS[state.units] });
     needsRender = false;
   }
   requestAnimationFrame(frame);
@@ -685,6 +704,7 @@ function frame() {
 function boot() {
   buildThreadPicker();
   buildHoopPicker();
+  buildUnitToggle();
   buildShapePicker();
   setTool("select");
   resize();

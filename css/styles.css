@@ -90,6 +90,15 @@ body {
 .muted { color: var(--muted); font-weight: 400; }
 .dims { color: var(--muted); font-size: 11px; margin-top: 6px; }
 
+.unit-toggle { display: flex; gap: 0; margin-top: 8px; }
+.unit-btn {
+  flex: 1; background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); padding: 5px 8px; cursor: pointer; font-size: 12px;
+}
+.unit-btn:first-child { border-radius: 6px 0 0 6px; }
+.unit-btn:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.unit-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+
 .props-empty { color: var(--muted); font-style: italic; }
 .prop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
 .prop-row label { color: var(--muted); font-size: 11px; flex: 1; }

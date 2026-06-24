@@ -3,6 +3,7 @@
 
 import { getHoop } from "./hoop.js";
 import { generateForObject } from "./stitches.js";
+import { UNITS } from "./units.js";
 
 export const RULER = 22; // px width of the ruler strips
 
@@ -108,7 +109,7 @@ export function render(ctx, state, compiled, sim, opts) {
   }
 
   // Rulers + cursor markers on top of everything.
-  drawRulers(ctx, cam, cw, ch, opts.cursor);
+  drawRulers(ctx, cam, cw, ch, opts.cursor, opts.unit || UNITS.mm);
 
   ctx.restore();
 }
@@ -132,17 +133,19 @@ function drawGuides(ctx, cam, state, cw, ch, hoverGuide) {
   }
 }
 
-// Choose a "nice" mm step so labels are ~60px apart.
-function niceStep(pxPerMm) {
-  const target = 60 / pxPerMm; // mm per label
-  const steps = [1, 2, 5, 10, 20, 25, 50, 100];
-  for (const s of steps) if (s >= target) return s;
-  return 100;
+// Choose a "nice" step (in display units) so labels are ~64px apart.
+function niceStep(pxPerMm, unit) {
+  const pxPerUnit = pxPerMm * unit.mmPer;
+  const target = 64 / pxPerUnit; // display units per label
+  for (const s of unit.steps) if (s >= target) return s;
+  return unit.steps[unit.steps.length - 1];
 }
 
-function drawRulers(ctx, cam, cw, ch, cursor) {
-  const step = niceStep(cam.pxPerMm);
-  const minor = step / (step >= 10 ? 10 : 5);
+function drawRulers(ctx, cam, cw, ch, cursor, unit) {
+  const stepU = niceStep(cam.pxPerMm, unit);   // in display units
+  const step = stepU * unit.mmPer;              // back to mm
+  const minor = step / unit.minorDiv;
+  const lbl = (mm) => String(Number((mm / unit.mmPer).toFixed(3)));
   ctx.fillStyle = "#1c2330";
   ctx.fillRect(RULER, 0, cw - RULER, RULER);  // top
   ctx.fillRect(0, RULER, RULER, ch - RULER);  // left
@@ -166,7 +169,7 @@ function drawRulers(ctx, cam, cw, ch, cursor) {
     const major = Math.abs(mm % step) < 1e-6;
     ctx.strokeStyle = "#3a4656";
     ctx.beginPath(); ctx.moveTo(sx, RULER); ctx.lineTo(sx, RULER - (major ? 8 : 4)); ctx.stroke();
-    if (major) ctx.fillText(String(Math.round(mm)), sx + 2, 9);
+    if (major) ctx.fillText(lbl(mm), sx + 2, 9);
   }
   // left ruler
   const wy0 = cam.toWorld({ x: 0, y: RULER }).y;
@@ -178,7 +181,7 @@ function drawRulers(ctx, cam, cw, ch, cursor) {
     ctx.beginPath(); ctx.moveTo(RULER, sy); ctx.lineTo(RULER - (major ? 8 : 4), sy); ctx.stroke();
     if (major) {
       ctx.save(); ctx.translate(9, sy - 2); ctx.rotate(-Math.PI / 2);
-      ctx.fillText(String(Math.round(mm)), 0, 0); ctx.restore();
+      ctx.fillText(lbl(mm), 0, 0); ctx.restore();
     }
   }
 
