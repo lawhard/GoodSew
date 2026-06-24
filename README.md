@@ -65,6 +65,9 @@ and an optional **outline pass**, then simulate and export.
 ### More
 - **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
 - **Undo / redo** — Ctrl/Cmd+Z and Ctrl+Y (or Ctrl/Cmd+Shift+Z), plus toolbar buttons.
+- **Layout tools** — multi-select (Shift+click), copy / cut / paste / duplicate
+  (Ctrl C/X/V/D), select-all (Ctrl+A), group / ungroup, and align / distribute
+  (left/center/right, top/middle/bottom, spread H/V) from the multi-select panel.
 - **Layers** — reorder objects (▲ / ▼ in the Objects panel) to set draw / stitch order.
 - **Pan & zoom** — scroll to zoom; drag any empty part of the plate to pan (or hold Space / middle-drag).
 - **Product preview** — see the design composited at *true physical scale* onto

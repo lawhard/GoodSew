@@ -60,7 +60,8 @@ export const state = {
   mode: "design",        // 'design' (layout) | 'stitch' (rendered pattern)
   objects: [],
   guides: [],            // [{ id, axis:'x'|'y', pos }]
-  selectedId: null,
+  selectedId: null,      // primary selection (last clicked)
+  selectedIds: [],       // full multi-selection
   activeColor: "#0e1f7c",
   image: null,           // HTMLImageElement (tracing background)
   imageTransform: { x: 0, y: 0, scale: 1, opacity: 0.5 },
@@ -113,7 +114,7 @@ export function serialize() {
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
       points: o.points, rotation: o.rotation || 0,
-      kind: o.kind, box: o.box,
+      kind: o.kind, box: o.box, groupId: o.groupId,
       params: o.params, visible: o.visible,
     })),
   }, null, 2);
@@ -134,10 +135,12 @@ export function deserialize(json) {
     rotation: o.rotation || 0,
     kind: o.kind,
     box: o.box,
+    groupId: o.groupId,
     params: { ...defaultParams(o.type === "text" ? "text" : "fill"), ...(o.params || {}) },
     visible: o.visible !== false,
   }));
   state.selectedId = null;
+  state.selectedIds = [];
   state.mode = "design";
   markDirty();
 }

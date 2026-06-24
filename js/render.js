@@ -125,8 +125,13 @@ export function render(ctx, state, compiled, sim, opts) {
     if (simActive && upto > 0) drawNeedle(ctx, cam, compiled, upto);
   } else {
     drawObjectsSolid(ctx, cam, state, TH);
-    const sel = state.objects.find((x) => x.id === state.selectedId);
-    if (sel && sel.visible) drawSelection(ctx, cam, sel);
+    const ids = state.selectedIds && state.selectedIds.length ? state.selectedIds
+      : (state.selectedId != null ? [state.selectedId] : []);
+    const withHandles = ids.length === 1; // resize/rotate handles only for a single object
+    for (const id of ids) {
+      const o = state.objects.find((x) => x.id === id);
+      if (o && o.visible) drawSelection(ctx, cam, o, withHandles);
+    }
   }
 
   drawGuides(ctx, cam, state, cw, ch, opts.hoverGuide);
@@ -168,7 +173,7 @@ function drawObjectsSolid(ctx, cam, state, TH) {
   }
 }
 
-function drawSelection(ctx, cam, obj) {
+function drawSelection(ctx, cam, obj, withHandles = true) {
   const box = getObjBox(obj);
   const h = boxHandlesWorld(box);
   const S = (p) => cam.toScreen(p);
@@ -180,6 +185,8 @@ function drawSelection(ctx, cam, obj) {
   ctx.moveTo(nw.x, nw.y); ctx.lineTo(ne.x, ne.y);
   ctx.lineTo(se.x, se.y); ctx.lineTo(sw.x, sw.y); ctx.closePath(); ctx.stroke();
   ctx.setLineDash([]);
+
+  if (!withHandles) { ctx.restore(); return; }
 
   // rotate handle (stick up from the top-mid)
   const nMid = S(h.n);

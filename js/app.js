@@ -19,7 +19,7 @@ import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
-const APP_VERSION = "0.4.4"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.5"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -96,7 +96,7 @@ function historySnapshot() {
       params: { ...o.params }, visible: o.visible,
     })),
     guides: state.guides,
-    selectedId: state.selectedId,
+    selectedIds: state.selectedIds,
   });
 }
 // Record the current state as a new undo step (immediate).
@@ -116,7 +116,7 @@ function restore(snap) {
   const data = JSON.parse(snap);
   state.objects = data.objects.map((o) => ({ ...o, params: { ...o.params } }));
   state.guides = data.guides || [];
-  state.selectedId = data.selectedId;
+  setSel((data.selectedIds || (data.selectedId != null ? [data.selectedId] : [])).filter((id) => data.objects.some((o) => o.id === id)));
   state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
   markDirty();
   if (state.mode === "stitch") recompile();
@@ -156,6 +156,98 @@ function reorder(id, delta) {
   if (state.mode === "stitch") recompile();
   commit();
   refreshObjectList(); needsRender = true;
+}
+
+// ----------------------------------------------------------- selection
+function setSel(ids) {
+  state.selectedIds = ids.slice();
+  state.selectedId = ids.length ? ids[ids.length - 1] : null;
+}
+function selectedObjects() {
+  return (state.selectedIds || []).map((id) => state.objects.find((o) => o.id === id)).filter(Boolean);
+}
+
+// Move an object by (dx,dy) mm, keeping its baked geometry in sync.
+function translateObject(obj, dx, dy) {
+  obj.points = (obj.points || []).map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  if (obj.box) { obj.box = { ...obj.box, x: obj.box.x + dx, y: obj.box.y + dy }; rebuildShape(obj); }
+}
+
+// ----------------------------------------------------------- clipboard / dup
+let clipboard = [];
+function cloneData(o) {
+  return JSON.parse(JSON.stringify({
+    type: o.type, name: o.name, color: o.color, kind: o.kind, box: o.box,
+    rotation: o.rotation || 0, points: o.points, params: o.params,
+    visible: o.visible, groupId: o.groupId,
+  }));
+}
+// Instantiate cloned object data offset by `off` mm, select the new copies.
+function pasteData(dataArr, off = 5) {
+  if (!dataArr.length) return;
+  const groupMap = {};
+  const ids = [];
+  for (const d of dataArr) {
+    const o = JSON.parse(JSON.stringify(d));
+    o.id = nextId();
+    if (o.box) { o.box.x += off; o.box.y += off; }
+    o.points = (o.points || []).map((p) => ({ x: p.x + off, y: p.y + off }));
+    if (o.groupId != null) { // keep a copied group together under a fresh id
+      if (!(o.groupId in groupMap)) groupMap[o.groupId] = nextId();
+      o.groupId = groupMap[o.groupId];
+    }
+    if (o.type === "text") bakeText(o); else rebuildShape(o);
+    state.objects.push(o);
+    ids.push(o.id);
+  }
+  setSel(ids);
+  markDirty(); if (state.mode === "stitch") recompile();
+  commit(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+}
+function copySelection() { const o = selectedObjects(); if (o.length) clipboard = o.map(cloneData); }
+function pasteClipboard() { pasteData(clipboard); }
+function duplicateSelection() { pasteData(selectedObjects().map(cloneData)); }
+
+// ----------------------------------------------------------- group / align
+function groupSelection() {
+  const objs = selectedObjects(); if (objs.length < 2) return;
+  const gid = nextId(); objs.forEach((o) => (o.groupId = gid));
+  commit(); refreshObjectList(); refreshProps();
+}
+function ungroupSelection() {
+  selectedObjects().forEach((o) => (o.groupId = null));
+  commit(); refreshObjectList(); refreshProps();
+}
+function afterLayout() {
+  markDirty(); if (state.mode === "stitch") recompile();
+  commit(); refreshObjectList(); refreshProps(); needsRender = true;
+}
+function alignSelected(mode) {
+  const arr = selectedObjects().map((o) => ({ o, b: getObjBox(o) }));
+  if (arr.length < 2) return;
+  const L = (x) => x.b.cx - x.b.w / 2, R = (x) => x.b.cx + x.b.w / 2;
+  const T = (x) => x.b.cy - x.b.h / 2, B = (x) => x.b.cy + x.b.h / 2;
+  let target;
+  if (mode === "left")   { target = Math.min(...arr.map(L)); arr.forEach((x) => translateObject(x.o, target - L(x), 0)); }
+  if (mode === "right")  { target = Math.max(...arr.map(R)); arr.forEach((x) => translateObject(x.o, target - R(x), 0)); }
+  if (mode === "centerH"){ target = arr.reduce((s, x) => s + x.b.cx, 0) / arr.length; arr.forEach((x) => translateObject(x.o, target - x.b.cx, 0)); }
+  if (mode === "top")    { target = Math.min(...arr.map(T)); arr.forEach((x) => translateObject(x.o, 0, target - T(x))); }
+  if (mode === "bottom") { target = Math.max(...arr.map(B)); arr.forEach((x) => translateObject(x.o, 0, target - B(x))); }
+  if (mode === "middleV"){ target = arr.reduce((s, x) => s + x.b.cy, 0) / arr.length; arr.forEach((x) => translateObject(x.o, 0, target - x.b.cy)); }
+  afterLayout();
+}
+function distributeSelected(axis) {
+  const arr = selectedObjects().map((o) => ({ o, b: getObjBox(o) }));
+  if (arr.length < 3) return;
+  const key = axis === "h" ? "cx" : "cy";
+  arr.sort((a, b) => a.b[key] - b.b[key]);
+  const lo = arr[0].b[key], hi = arr[arr.length - 1].b[key];
+  const step = (hi - lo) / (arr.length - 1);
+  arr.forEach((x, i) => {
+    const d = (lo + step * i) - x.b[key];
+    translateObject(x.o, axis === "h" ? d : 0, axis === "h" ? 0 : d);
+  });
+  afterLayout();
 }
 
 // ------------------------------------------------------------ object baking
@@ -242,7 +334,7 @@ function addText(anchor) {
   obj.name = "Text";
   obj.params.text = "Text";
   state.objects.push(obj);
-  state.selectedId = obj.id;
+  setSel([obj.id]);
   bakeText(obj, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; });
   setTool("select");
   refreshObjectList(); refreshProps(); updateEmptyHint();
@@ -256,7 +348,7 @@ function addShape(kind, box) {
   obj.name = SHAPES.find((s) => s.kind === kind)?.label || "Shape";
   rebuildShape(obj);
   state.objects.push(obj);
-  state.selectedId = obj.id;
+  setSel([obj.id]);
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint();
   return obj;
 }
@@ -306,8 +398,8 @@ canvas.addEventListener("mousedown", (e) => {
   if (state.mode === "stitch") {
     // stitch view: click an object to fine-tune it; drag empty space to pan.
     const hit = hitTestObject(world);
-    if (hit) { state.selectedId = hit.id; }
-    else { state.selectedId = null; drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY }; }
+    if (hit) { setSel([hit.id]); }
+    else { setSel([]); drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY }; }
     refreshProps(); refreshObjectList(); needsRender = true;
     return;
   }
@@ -320,9 +412,9 @@ canvas.addEventListener("mousedown", (e) => {
   }
   if (tool === "text") { addText(world); return; }
 
-  // select tool — handles first, then objects
+  // select tool — resize/rotate handles (single selection only), then objects
   const sel = selectedObject();
-  if (sel && sel.visible) {
+  if (sel && sel.visible && state.selectedIds.length === 1) {
     const H = selectionHandlesScreen(sel);
     if (dist(H.rotate, { x: mx, y: my }) <= HANDLE_HIT + 2) {
       const box = H._box;
@@ -341,12 +433,25 @@ canvas.addEventListener("mousedown", (e) => {
 
   const hit = hitTestObject(world);
   if (hit) {
-    state.selectedId = hit.id;
-    drag = { mode: "move", obj: hit, start: world, orig: snapshot(hit) };
+    if (e.shiftKey) {
+      // toggle this object in/out of the selection
+      const ids = state.selectedIds.slice();
+      const i = ids.indexOf(hit.id);
+      if (i >= 0) ids.splice(i, 1); else ids.push(hit.id);
+      setSel(ids);
+    } else if (state.selectedIds.includes(hit.id)) {
+      // already selected → keep the set (so a group can be dragged), set primary
+      setSel([...state.selectedIds.filter((id) => id !== hit.id), hit.id]);
+    } else if (hit.groupId != null) {
+      setSel(state.objects.filter((o) => o.groupId === hit.groupId && o.visible).map((o) => o.id));
+    } else {
+      setSel([hit.id]);
+    }
+    drag = { mode: "move", start: world, items: selectedObjects().map((o) => ({ obj: o, orig: snapshot(o) })) };
     refreshProps(); refreshObjectList(); needsRender = true;
   } else {
-    // empty space: deselect and pan the view (drag to move the build plate)
-    state.selectedId = null;
+    // empty space: deselect (unless extending) and pan the view
+    if (!e.shiftKey) setSel([]);
     drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY };
     refreshProps(); refreshObjectList(); needsRender = true;
   }
@@ -387,9 +492,10 @@ canvas.addEventListener("mousemove", (e) => {
     drag.obj.box = box; rebuildShape(drag.obj); markDirty();
   } else if (drag.mode === "move") {
     const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
-    const o = drag.obj;
-    o.points = drag.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-    if (drag.orig.box) o.box = { ...drag.orig.box, x: drag.orig.box.x + dx, y: drag.orig.box.y + dy };
+    for (const it of drag.items) {
+      it.obj.points = it.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+      if (it.orig.box) it.obj.box = { ...it.orig.box, x: it.orig.box.x + dx, y: it.orig.box.y + dy };
+    }
     markDirty();
   } else if (drag.mode === "resize") {
     doResize(drag, world);
@@ -450,7 +556,7 @@ window.addEventListener("mouseup", () => {
       const b = drag.obj.box;
       if (b.w < 1.2 && b.h < 1.2) {
         state.objects = state.objects.filter((o) => o !== drag.obj);
-        state.selectedId = null;
+        setSel([]);
       }
       setTool("select");
       refreshObjectList(); refreshProps();
@@ -473,7 +579,7 @@ canvas.addEventListener("dblclick", (e) => {
   if (state.mode !== "design") return;
   const world = mouseWorld(e);
   const hit = hitTestObject(world);
-  if (hit && hit.type === "text") { state.selectedId = hit.id; openTextEditor(hit); refreshProps(); refreshObjectList(); }
+  if (hit && hit.type === "text") { setSel([hit.id]); openTextEditor(hit); refreshProps(); refreshObjectList(); }
 });
 
 canvas.addEventListener("mouseleave", () => { cursor = null; needsRender = true; });
@@ -568,6 +674,13 @@ window.addEventListener("keydown", (e) => {
     const k = e.key.toLowerCase();
     if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); return; }
+    if (state.mode === "design") {
+      if (k === "c") { copySelection(); e.preventDefault(); return; }
+      if (k === "x") { copySelection(); deleteSelected(); e.preventDefault(); return; }
+      if (k === "v") { pasteClipboard(); e.preventDefault(); return; }
+      if (k === "d") { duplicateSelection(); e.preventDefault(); return; }
+      if (k === "a") { setSel(state.objects.filter((o) => o.visible).map((o) => o.id)); refreshProps(); refreshObjectList(); needsRender = true; e.preventDefault(); return; }
+    }
   }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === " ") spaceDown = true;
@@ -578,14 +691,17 @@ window.addEventListener("keydown", (e) => {
       case "s": setTool("shape"); break;
     }
   }
-  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedId && state.mode === "design") { deleteSelected(); e.preventDefault(); }
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedIds.length && state.mode === "design") { deleteSelected(); e.preventDefault(); }
 });
 window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; if (e.key === "Shift") shiftDown = false; });
 
 function deleteSelected() {
-  state.objects = state.objects.filter((o) => o.id !== state.selectedId);
-  state.selectedId = null;
-  markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+  const ids = new Set(state.selectedIds);
+  if (state.selectedId != null) ids.add(state.selectedId);
+  state.objects = state.objects.filter((o) => !ids.has(o.id));
+  setSel([]);
+  markDirty(); if (state.mode === "stitch") recompile();
+  refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
   commit();
 }
 
@@ -660,7 +776,7 @@ function refreshObjectList() {
   // top of list = drawn last; show in reverse so newest is on top
   state.objects.slice().reverse().forEach((obj) => {
     const li = document.createElement("li");
-    li.className = "object-item" + (obj.id === state.selectedId ? " selected" : "");
+    li.className = "object-item" + (state.selectedIds.includes(obj.id) ? " selected" : "");
     const icon = document.createElement("span");
     icon.className = "obj-icon"; icon.style.background = obj.color;
     icon.textContent = obj.type === "text" ? "T" : "◆";
@@ -684,9 +800,17 @@ function refreshObjectList() {
     vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); if (state.mode === "stitch") recompile(); refreshObjectList(); needsRender = true; commit(); };
     const del = document.createElement("button");
     del.className = "obj-btn danger"; del.textContent = "🗑"; del.title = "Delete";
-    del.onclick = (e) => { e.stopPropagation(); state.selectedId = obj.id; deleteSelected(); };
+    del.onclick = (e) => { e.stopPropagation(); setSel([obj.id]); deleteSelected(); };
     li.append(icon, main, up, down, vis, del);
-    li.onclick = () => { state.selectedId = obj.id; refreshProps(); refreshObjectList(); needsRender = true; };
+    li.onclick = (e) => {
+      if (e.shiftKey) {
+        const ids = state.selectedIds.slice();
+        const i = ids.indexOf(obj.id);
+        if (i >= 0) ids.splice(i, 1); else ids.push(obj.id);
+        setSel(ids);
+      } else { setSel([obj.id]); }
+      refreshProps(); refreshObjectList(); needsRender = true;
+    };
     ul.appendChild(li);
   });
 }
@@ -700,12 +824,57 @@ function refreshProps() {
   if (!obj) { host.className = "props-empty"; host.textContent = "Select or add an object to edit it."; return; }
   host.className = ""; host.innerHTML = "";
 
+  if (state.selectedIds.length > 1) { buildMultiProps(host); return; }
+
   if (obj.type === "text") buildTextProps(host, obj);
   else buildShapeProps(host, obj);
 
   const del = document.createElement("button");
   del.className = "btn btn-danger"; del.textContent = "Delete object";
   del.style.width = "100%"; del.style.marginTop = "6px";
+  del.onclick = deleteSelected;
+  host.appendChild(del);
+}
+
+// Panel shown when 2+ objects are selected: align / distribute / group.
+function buildMultiProps(host) {
+  $("props-title").textContent = `${state.selectedIds.length} objects`;
+  const grid = (labels) => {
+    const g = document.createElement("div"); g.className = "layout-grid";
+    for (const [txt, fn, title] of labels) {
+      const b = document.createElement("button"); b.className = "layout-btn"; b.textContent = txt; b.title = title;
+      b.onclick = fn; g.appendChild(b);
+    }
+    return g;
+  };
+  const lbl = (t) => { const d = document.createElement("div"); d.className = "prop-sublabel"; d.textContent = t; host.appendChild(d); };
+
+  lbl("Align");
+  host.appendChild(grid([
+    ["⊏ Left", () => alignSelected("left"), "Align left edges"],
+    ["↔ Center", () => alignSelected("centerH"), "Center horizontally"],
+    ["Right ⊐", () => alignSelected("right"), "Align right edges"],
+    ["⊓ Top", () => alignSelected("top"), "Align top edges"],
+    ["↕ Middle", () => alignSelected("middleV"), "Center vertically"],
+    ["Bottom ⊔", () => alignSelected("bottom"), "Align bottom edges"],
+  ]));
+
+  lbl("Distribute (needs 3+)");
+  host.appendChild(grid([
+    ["↔ Across", () => distributeSelected("h"), "Distribute horizontally"],
+    ["↕ Down", () => distributeSelected("v"), "Distribute vertically"],
+  ]));
+
+  lbl("Arrange");
+  host.appendChild(grid([
+    ["Group", groupSelection, "Group"],
+    ["Ungroup", ungroupSelection, "Ungroup"],
+    ["Duplicate", duplicateSelection, "Duplicate (Ctrl+D)"],
+  ]));
+
+  const del = document.createElement("button");
+  del.className = "btn btn-danger"; del.textContent = `Delete ${state.selectedIds.length} objects`;
+  del.style.width = "100%"; del.style.marginTop = "8px";
   del.onclick = deleteSelected;
   host.appendChild(del);
 }
@@ -879,7 +1048,7 @@ $("btn-redo").onclick = redo;
 
 $("btn-new").onclick = () => {
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
-  state.objects = []; state.selectedId = null; state.image = null;
+  state.objects = []; setSel([]); state.image = null;
   markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
   resetHistory();
   toast("New design");
@@ -1043,7 +1212,8 @@ function boot() {
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
     addText, addShape, bakeText,
     // test helper: screen-space handle positions for the given object
-    handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; state.selectedId = o.id; return selectionHandlesScreen(o); },
+    handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
+    setSel, selectedObjects, copySelection, pasteClipboard, duplicateSelection, groupSelection, ungroupSelection, alignSelected, distributeSelected,
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
     exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
     exportDSTBytes: () => { ensureCompiled(); return Array.from(exportDST(compiled)); },
@@ -1060,7 +1230,7 @@ function seedDemo() {
   const text = makeObject("text", [{ x: cx - 30, y: 78 }], rgbToHex([14, 31, 124]));
   text.name = "GoodSew"; text.params.text = "GoodSew"; text.params.font = "Anton"; text.params.size = 16;
   state.objects.push(heart, text);
-  state.selectedId = text.id;
+  setSel([text.id]);
   bakeText(text, () => { markDirty(); refreshObjectList(); needsRender = true; });
   markDirty();
 }
