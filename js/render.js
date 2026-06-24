@@ -296,7 +296,9 @@ function drawStitches(ctx, cam, compiled, upto, view) {
   const { plan, colors } = compiled;
   let penDown = false;
   let last = null;
-  ctx.lineWidth = 1.3;
+  // Render each stitch at realistic thread width so a dense fill reads as solid
+  // coverage instead of thin stripes. ~0.4 mm thread, never thinner than ~1.1 px.
+  ctx.lineWidth = Math.max(1.1, cam.pxPerMm * 0.4);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 

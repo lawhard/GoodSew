@@ -174,9 +174,9 @@ export function generateText(obj) {
   const subs = [];
   for (const contours of glyphs) {
     const moved = contours.map(shift);
-    // fillContours now returns an array of hole-aware subpaths; spread them so
-    // the compiler trims/jumps across counters instead of stitching through.
-    for (const f of fillContours(moved, obj.params)) {
+    // Fill each glyph with the same smart underlay + hole-aware tatami used for
+    // shapes, so lettering reads as solid, stabilized fill (not thin stripes).
+    for (const f of fillWithUnderlay(moved, obj.params)) {
       if (f.length) subs.push(f);
     }
     if (obj.params.outline) {

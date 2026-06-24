@@ -30,7 +30,7 @@ export function defaultParams(type) {
     case "text":
       return {
         text: "Text", font: "Anton", size: 16, letterSpacing: 0,
-        spacing: 0.4, stitchLength: 2.5, angle: 0,
+        spacing: 0.4, stitchLength: 2.5, angle: 0, underlay: true,
         bold: false, italic: false, underline: false, curve: 0,
         outline: false, outlineLen: 2.0,
       };
