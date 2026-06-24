@@ -64,6 +64,9 @@ and an optional **outline pass**, then simulate and export.
 
 ### More
 - **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
+- **Undo / redo** — Ctrl/Cmd+Z and Ctrl+Y (or Ctrl/Cmd+Shift+Z), plus toolbar buttons.
+- **Layers** — reorder objects (▲ / ▼ in the Objects panel) to set draw / stitch order.
+- **Pan & zoom** — scroll to zoom; drag any empty part of the plate to pan (or hold Space / middle-drag).
 - **Product preview** — see the design composited at *true physical scale* onto
   a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom
   rectangle whose dimensions you type in. Each mockup is drawn to real-world

@@ -8,7 +8,7 @@ export class Simulator {
     this.total = 0;
     this.playing = false;
     this.engaged = false;  // false = show full design; true = show up to `index`
-    this.speed = 40;       // plan-entries advanced per second tick scaler
+    this.speed = 100;      // slider position (1..200); see _loop for the curve
     this._acc = 0;
     this._raf = null;
     this._last = 0;
@@ -54,8 +54,11 @@ export class Simulator {
     const now = performance.now();
     const dt = (now - this._last) / 1000;
     this._last = now;
-    // speed slider maps to stitches/sec on an exponential-ish curve.
-    const perSec = this.speed * this.speed * 0.6 + 10;
+    // Speed slider (1..200) maps EXPONENTIALLY to stitches/sec so equal slider
+    // movements give an equal *relative* change everywhere — no jump from
+    // crawling to racing. 1 → ~10 spm-ish, mid → a few hundred, 200 → ~6000.
+    const t = (this.speed - 1) / 199;
+    const perSec = 10 * Math.pow(600, Math.max(0, Math.min(1, t)));
     this._acc += perSec * dt;
     const step = Math.floor(this._acc);
     if (step >= 1) {

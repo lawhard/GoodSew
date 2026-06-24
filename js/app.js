@@ -18,7 +18,7 @@ import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
-const APP_VERSION = "0.4.2"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.3"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -84,6 +84,79 @@ function refreshStats() {
   $("stat-time").textContent = formatTime(st.seconds);
 }
 
+// ----------------------------------------------------------- history (undo/redo)
+let undoStack = [], redoStack = [], commitTimer = null;
+
+function historySnapshot() {
+  return JSON.stringify({
+    objects: state.objects.map((o) => ({
+      id: o.id, type: o.type, name: o.name, color: o.color, kind: o.kind,
+      box: o.box, rotation: o.rotation || 0, points: o.points,
+      params: { ...o.params }, visible: o.visible,
+    })),
+    guides: state.guides,
+    selectedId: state.selectedId,
+  });
+}
+// Record the current state as a new undo step (immediate).
+function commit() {
+  const snap = historySnapshot();
+  if (undoStack.length && undoStack[undoStack.length - 1] === snap) return;
+  undoStack.push(snap);
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack = [];
+  updateUndoButtons();
+}
+// Debounced commit for rapid edits (typing, dragging a slider).
+function commitSoon() { clearTimeout(commitTimer); commitTimer = setTimeout(commit, 350); }
+function resetHistory() { undoStack = []; redoStack = []; commit(); }
+
+function restore(snap) {
+  const data = JSON.parse(snap);
+  state.objects = data.objects.map((o) => ({ ...o, params: { ...o.params } }));
+  state.guides = data.guides || [];
+  state.selectedId = data.selectedId;
+  state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
+  markDirty();
+  if (state.mode === "stitch") recompile();
+  refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+}
+function undo() {
+  clearTimeout(commitTimer);
+  if (undoStack.length < 2) return;
+  redoStack.push(undoStack.pop());
+  restore(undoStack[undoStack.length - 1]);
+  updateUndoButtons();
+}
+function redo() {
+  if (!redoStack.length) return;
+  const snap = redoStack.pop();
+  undoStack.push(snap);
+  restore(snap);
+  updateUndoButtons();
+}
+function updateUndoButtons() {
+  const u = $("btn-undo"), r = $("btn-redo");
+  if (u) u.disabled = undoStack.length < 2;
+  if (r) r.disabled = redoStack.length === 0;
+}
+
+// ----------------------------------------------------------- layer reorder
+// Move the object within the draw order. delta>0 = toward the top of the layer
+// list (drawn later / on top = later in the array).
+function reorder(id, delta) {
+  const i = state.objects.findIndex((o) => o.id === id);
+  if (i < 0) return;
+  const j = i + delta;
+  if (j < 0 || j >= state.objects.length) return;
+  const [obj] = state.objects.splice(i, 1);
+  state.objects.splice(j, 0, obj);
+  markDirty();
+  if (state.mode === "stitch") recompile();
+  commit();
+  refreshObjectList(); needsRender = true;
+}
+
 // ------------------------------------------------------------ object baking
 function rebuildShape(obj) {
   if (!obj.box) return;
@@ -124,6 +197,7 @@ function bakeText(obj, after) {
 
 // ----------------------------------------------------------------- modes
 function setMode(mode) {
+  if (editing) closeTextEditor(true);
   state.mode = mode;
   document.body.dataset.mode = mode;
   if (mode === "stitch") { ensureCompiled(); sim.toStart(); sim.engaged = false; sim.seek(0); sim.engaged = false; needsRender = true; }
@@ -171,6 +245,7 @@ function addText(anchor) {
   bakeText(obj, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; });
   setTool("select");
   refreshObjectList(); refreshProps(); updateEmptyHint();
+  commit();
 }
 
 function addShape(kind, box) {
@@ -228,9 +303,10 @@ canvas.addEventListener("mousedown", (e) => {
   if (gh) { drag = { mode: "guide", guide: gh }; return; }
 
   if (state.mode === "stitch") {
-    // stitch view: click to choose which object to fine-tune (no editing)
+    // stitch view: click an object to fine-tune it; drag empty space to pan.
     const hit = hitTestObject(world);
-    state.selectedId = hit ? hit.id : null;
+    if (hit) { state.selectedId = hit.id; }
+    else { state.selectedId = null; drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY }; }
     refreshProps(); refreshObjectList(); needsRender = true;
     return;
   }
@@ -268,7 +344,9 @@ canvas.addEventListener("mousedown", (e) => {
     drag = { mode: "move", obj: hit, start: world, orig: snapshot(hit) };
     refreshProps(); refreshObjectList(); needsRender = true;
   } else {
+    // empty space: deselect and pan the view (drag to move the build plate)
     state.selectedId = null;
+    drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY };
     refreshProps(); refreshObjectList(); needsRender = true;
   }
 });
@@ -366,6 +444,7 @@ window.addEventListener("mouseup", () => {
     if (drag.mode === "guide") {
       const inRuler = cursor && (cursor.sx < RULER || cursor.sy < RULER);
       if (inRuler) state.guides = state.guides.filter((g) => g.id !== drag.guide.id);
+      commit();
     } else if (drag.mode === "draw-shape") {
       const b = drag.obj.box;
       if (b.w < 1.2 && b.h < 1.2) {
@@ -374,8 +453,10 @@ window.addEventListener("mouseup", () => {
       }
       setTool("select");
       refreshObjectList(); refreshProps();
+      commit();
     } else if (drag.mode === "resize" || drag.mode === "rotate" || drag.mode === "move") {
       refreshProps();
+      commit();
     }
   }
   drag = null;
@@ -412,7 +493,7 @@ function baseScale() {
 }
 
 function hoverCursor(mx, my) {
-  if (state.mode !== "design") return "default";
+  if (state.mode !== "design") return "grab"; // stitch view: drag empty space to pan
   const sel = selectedObject();
   if (sel && sel.visible) {
     const H = selectionHandlesScreen(sel);
@@ -421,7 +502,8 @@ function hoverCursor(mx, my) {
     for (const k of ["n", "s"]) if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) return "ns-resize";
     for (const k of ["e", "w"]) if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) return "ew-resize";
   }
-  return tool === "select" ? "default" : "crosshair";
+  // select tool: grab affordance on the (pannable) plate; crosshair while placing
+  return tool === "select" ? "grab" : "crosshair";
 }
 
 function guideAt(mx, my) {
@@ -460,13 +542,14 @@ function openTextEditor(obj) {
   ed.classList.remove("hidden");
   ed.focus(); ed.select();
 }
-function closeTextEditor(commit) {
+function closeTextEditor(doCommit) {
   if (!editing) return;
   const ed = $("text-editor");
-  if (commit) { editing.params.text = ed.value || " "; editing.name = ed.value.slice(0, 18) || "Text"; bakeText(editing); markDirty(); }
+  if (doCommit) { editing.params.text = ed.value || " "; editing.name = ed.value.slice(0, 18) || "Text"; bakeText(editing); markDirty(); }
   ed.classList.add("hidden");
   editing = null;
   refreshObjectList(); refreshProps(); needsRender = true;
+  if (doCommit) commit();
 }
 $("text-editor").addEventListener("input", (e) => { if (editing) { editing.params.text = e.target.value || " "; bakeText(editing); needsRender = true; } });
 $("text-editor").addEventListener("keydown", (e) => {
@@ -479,6 +562,12 @@ $("text-editor").addEventListener("blur", () => closeTextEditor(true));
 // --------------------------------------------------------------- keyboard
 window.addEventListener("keydown", (e) => {
   if (e.key === "Shift") shiftDown = true;
+  // Undo/redo work at the canvas level (only when not typing in a field).
+  if ((e.ctrlKey || e.metaKey) && !(e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) {
+    const k = e.key.toLowerCase();
+    if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); return; }
+  }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === " ") spaceDown = true;
   if (state.mode === "design") {
@@ -496,6 +585,7 @@ function deleteSelected() {
   state.objects = state.objects.filter((o) => o.id !== state.selectedId);
   state.selectedId = null;
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+  commit();
 }
 
 // ----------------------------------------------------------------- UI build
@@ -513,7 +603,7 @@ function buildThreadPicker() {
     state.activeColor = sel.value;
     updateActiveSwatch();
     const s = selectedObject();
-    if (s) { s.color = sel.value; markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }
+    if (s) { s.color = sel.value; markDirty(); refreshObjectList(); refreshProps(); needsRender = true; commit(); }
   });
   updateActiveSwatch();
 }
@@ -579,13 +669,22 @@ function refreshObjectList() {
     const sub = document.createElement("span"); sub.className = "obj-sub";
     sub.textContent = obj.type === "text" ? `Text · ${obj.params.font}` : `Shape · ${obj.name}`;
     main.append(label, sub);
+    const idx = state.objects.indexOf(obj);
+    const up = document.createElement("button");
+    up.className = "obj-btn"; up.textContent = "▲"; up.title = "Move up (forward)";
+    up.disabled = idx === state.objects.length - 1;
+    up.onclick = (e) => { e.stopPropagation(); reorder(obj.id, +1); };
+    const down = document.createElement("button");
+    down.className = "obj-btn"; down.textContent = "▼"; down.title = "Move down (back)";
+    down.disabled = idx === 0;
+    down.onclick = (e) => { e.stopPropagation(); reorder(obj.id, -1); };
     const vis = document.createElement("button");
     vis.className = "obj-btn"; vis.textContent = obj.visible ? "👁" : "🚫"; vis.title = "Show / hide";
-    vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); refreshObjectList(); needsRender = true; };
+    vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); if (state.mode === "stitch") recompile(); refreshObjectList(); needsRender = true; commit(); };
     const del = document.createElement("button");
     del.className = "obj-btn danger"; del.textContent = "🗑"; del.title = "Delete";
     del.onclick = (e) => { e.stopPropagation(); state.selectedId = obj.id; deleteSelected(); };
-    li.append(icon, main, vis, del);
+    li.append(icon, main, up, down, vis, del);
     li.onclick = () => { state.selectedId = obj.id; refreshProps(); refreshObjectList(); needsRender = true; };
     ul.appendChild(li);
   });
@@ -623,7 +722,7 @@ function row(host, labelText, el) {
 function numInput(val, step, min, onChange) {
   const i = document.createElement("input");
   i.type = "number"; i.value = round(val); i.step = step; if (min != null) i.min = min;
-  i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) onChange(v); };
+  i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) { onChange(v); commitSoon(); } };
   return i;
 }
 const round = (v) => Math.round(v * 1000) / 1000;
@@ -632,7 +731,7 @@ function buildTextProps(host, obj) {
   $("props-title").textContent = "Text";
   const t = document.createElement("input");
   t.type = "text"; t.value = obj.params.text;
-  t.oninput = () => { obj.params.text = t.value || " "; obj.name = t.value.slice(0, 18); bakeText(obj); markDirty(); refreshObjectList(); needsRender = true; };
+  t.oninput = () => { obj.params.text = t.value || " "; obj.name = t.value.slice(0, 18); bakeText(obj); markDirty(); refreshObjectList(); needsRender = true; commitSoon(); };
   rowFull(host, "Text", t);
 
   const fb = document.createElement("button");
@@ -649,7 +748,7 @@ function buildTextProps(host, obj) {
   const mk = (label, key, cls) => {
     const b = document.createElement("button"); b.className = "style-btn" + (obj.params[key] ? " active" : "");
     b.innerHTML = cls ? `<span class="${cls}">${label}</span>` : `<b>${label}</b>`;
-    b.onclick = () => { obj.params[key] = !obj.params[key]; b.classList.toggle("active"); bakeText(obj); markDirty(); needsRender = true; };
+    b.onclick = () => { obj.params[key] = !obj.params[key]; b.classList.toggle("active"); bakeText(obj); markDirty(); needsRender = true; commit(); };
     return b;
   };
   styleWrap.append(mk("B", "bold"), mk("I", "italic", "i"), mk("U", "underline", "u"));
@@ -657,7 +756,7 @@ function buildTextProps(host, obj) {
 
   const curve = document.createElement("input");
   curve.type = "range"; curve.min = -100; curve.max = 100; curve.value = obj.params.curve || 0;
-  curve.oninput = () => { obj.params.curve = parseInt(curve.value, 10); bakeText(obj); markDirty(); needsRender = true; };
+  curve.oninput = () => { obj.params.curve = parseInt(curve.value, 10); bakeText(obj); markDirty(); needsRender = true; commitSoon(); };
   row(host, "Arc / circle", curve);
 
   row(host, "Rotation (°)", numInput(obj.rotation || 0, 5, null, (v) => { obj.rotation = v; bakeText(obj); markDirty(); needsRender = true; }));
@@ -670,7 +769,7 @@ function buildShapeProps(host, obj) {
   const sel = document.createElement("select"); sel.className = "select";
   for (const s of SHAPES) { if (s.kind === "line") continue; const o = document.createElement("option"); o.value = s.kind; o.textContent = s.label; sel.appendChild(o); }
   sel.value = obj.kind || "rect";
-  sel.onchange = () => { obj.kind = sel.value; obj.name = SHAPES.find((s) => s.kind === sel.value)?.label || "Shape"; rebuildShape(obj); markDirty(); refreshObjectList(); needsRender = true; };
+  sel.onchange = () => { obj.kind = sel.value; obj.name = SHAPES.find((s) => s.kind === sel.value)?.label || "Shape"; rebuildShape(obj); markDirty(); refreshObjectList(); needsRender = true; commit(); };
   row(host, "Shape", sel);
 
   const u = state.units;
@@ -683,7 +782,7 @@ function buildShapeProps(host, obj) {
   const fillSel = document.createElement("select"); fillSel.className = "select";
   fillSel.innerHTML = `<option value="fill">Filled</option><option value="outline">Outline only</option>`;
   fillSel.value = obj.params.fillMode || "fill";
-  fillSel.onchange = () => { obj.params.fillMode = fillSel.value; markDirty(); needsRender = true; };
+  fillSel.onchange = () => { obj.params.fillMode = fillSel.value; markDirty(); needsRender = true; commit(); };
   row(host, "Style", fillSel);
 
   buildColorRow(host, obj);
@@ -695,7 +794,7 @@ function buildColorRow(host, obj) {
   const sel = document.createElement("select"); sel.className = "select";
   for (const t of BROTHER_PALETTE) { const o = document.createElement("option"); o.value = rgbToHex(t.rgb); o.textContent = `#${t.i} ${t.name}`; sel.appendChild(o); }
   sel.value = obj.color;
-  sel.onchange = () => { obj.color = sel.value; dot.style.background = sel.value; markDirty(); refreshObjectList(); needsRender = true; };
+  sel.onchange = () => { obj.color = sel.value; dot.style.background = sel.value; markDirty(); refreshObjectList(); needsRender = true; commit(); };
   wrap.append(dot, sel);
   rowFull(host, "Thread color", wrap);
 }
@@ -714,11 +813,11 @@ function refreshStitchSettings() {
   row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { p.angle = v; recompileLive(); }));
 
   const under = document.createElement("input"); under.type = "checkbox"; under.checked = p.underlay !== false;
-  under.onchange = () => { p.underlay = under.checked; recompileLive(); };
+  under.onchange = () => { p.underlay = under.checked; recompileLive(); commit(); };
   row(host, "Underlay", under);
 
   const out = document.createElement("input"); out.type = "checkbox"; out.checked = !!p.outline;
-  out.onchange = () => { p.outline = out.checked; recompileLive(); };
+  out.onchange = () => { p.outline = out.checked; recompileLive(); commit(); };
   row(host, "Outline pass", out);
 }
 
@@ -737,7 +836,7 @@ function buildFontGrid() {
     meta.innerHTML = `<div class="nm">${f.name}</div><div class="cat">${f.category}</div>`;
     card.append(s, meta);
     card.onclick = () => {
-      if (fontTarget) { fontTarget.params.font = f.name; bakeText(fontTarget, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }); }
+      if (fontTarget) { fontTarget.params.font = f.name; bakeText(fontTarget, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }); commit(); }
       closeFontGallery();
     };
     grid.appendChild(card);
@@ -774,11 +873,14 @@ $("sim-speed").oninput = (e) => { sim.speed = parseInt(e.target.value, 10); };
 $("btn-render").onclick = () => renderStitches();
 $("btn-back").onclick = () => setMode("design");
 $("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" : "light"; document.body.dataset.theme = state.theme; needsRender = true; };
+$("btn-undo").onclick = undo;
+$("btn-redo").onclick = redo;
 
 $("btn-new").onclick = () => {
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
   state.objects = []; state.selectedId = null; state.image = null;
   markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
+  resetHistory();
   toast("New design");
 };
 $("btn-import-image").onclick = () => $("file-image").click();
@@ -808,6 +910,7 @@ $("file-json").onchange = (e) => {
       setMode("design");
       refreshObjectList(); refreshProps(); updateEmptyHint();
       cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
+      resetHistory();
       toast("Project loaded");
     } catch (err) { toast("Could not load file: " + err.message, true); }
   };
@@ -922,10 +1025,11 @@ function boot() {
   refreshObjectList();
   refreshProps();
   updateEmptyHint();
+  resetHistory();
   frame();
 
   window.__gs = {
-    state, sim, setTool, setMode, renderStitches,
+    state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
     addText, addShape, bakeText,
     // test helper: screen-space handle positions for the given object
