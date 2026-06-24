@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoodSew — SE700 Embroidery Digitizer</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header id="topbar">
+    <div class="brand">
+      <span class="logo">✦</span>
+      <span class="title">GoodSew</span>
+      <span class="subtitle">Brother SE700 Digitizer</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-new" class="btn" title="New design">New</button>
+      <button id="btn-import-image" class="btn" title="Import a background image to trace">Import Image…</button>
+      <button id="btn-save-json" class="btn" title="Save project (.gsew JSON)">Save</button>
+      <button id="btn-load-json" class="btn" title="Open project (.gsew JSON)">Open</button>
+      <button id="btn-export-pes" class="btn btn-primary" title="Export to Brother PES">Export PES</button>
+      <input type="file" id="file-image" accept="image/*" hidden />
+      <input type="file" id="file-json" accept=".gsew,.json,application/json" hidden />
+    </div>
+  </header>
+
+  <div id="workspace">
+    <!-- Left: tools -->
+    <aside id="toolbar">
+      <div class="tool-group">
+        <div class="group-label">Tools</div>
+        <button class="tool" data-tool="select" title="Select / move (V)">⬚<span>Select</span></button>
+        <button class="tool" data-tool="running" title="Running stitch path (R)">／<span>Run</span></button>
+        <button class="tool" data-tool="satin" title="Satin column — draw center spine (S)">▤<span>Satin</span></button>
+        <button class="tool" data-tool="fill" title="Fill region polygon (F)">▦<span>Fill</span></button>
+      </div>
+      <div class="tool-group">
+        <div class="group-label">Thread</div>
+        <div id="active-thread-swatch" class="active-swatch" title="Active thread color"></div>
+        <select id="thread-picker" class="select"></select>
+      </div>
+      <div class="tool-group">
+        <div class="group-label">View</div>
+        <label class="check"><input type="checkbox" id="chk-show-image" checked /> Image</label>
+        <label class="check"><input type="checkbox" id="chk-show-stitches" checked /> Stitches</label>
+        <label class="check"><input type="checkbox" id="chk-show-jumps" checked /> Jumps</label>
+        <label class="check"><input type="checkbox" id="chk-show-points" /> Nodes</label>
+        <label class="check"><input type="checkbox" id="chk-show-grid" checked /> Grid</label>
+      </div>
+    </aside>
+
+    <!-- Center: canvas -->
+    <main id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="canvas-hud">
+        <span id="hud-coords">0.0, 0.0 mm</span>
+        <span id="hud-zoom">100%</span>
+        <span id="hud-hint"></span>
+      </div>
+    </main>
+
+    <!-- Right: properties + objects -->
+    <aside id="sidepanel">
+      <section class="panel">
+        <h3>Hoop</h3>
+        <select id="hoop-picker" class="select"></select>
+        <div class="dims" id="hoop-dims"></div>
+      </section>
+
+      <section class="panel" id="object-panel">
+        <h3>Object Properties</h3>
+        <div id="object-props" class="props-empty">No object selected.</div>
+      </section>
+
+      <section class="panel">
+        <h3>Objects <span id="object-count" class="muted"></span></h3>
+        <ul id="object-list" class="object-list"></ul>
+      </section>
+
+      <section class="panel" id="stats-panel">
+        <h3>Statistics</h3>
+        <table class="stats">
+          <tr><td>Stitches</td><td id="stat-stitches">0</td></tr>
+          <tr><td>Thread changes</td><td id="stat-colors">0</td></tr>
+          <tr><td>Jumps</td><td id="stat-jumps">0</td></tr>
+          <tr><td>Trims</td><td id="stat-trims">0</td></tr>
+          <tr><td>Dimensions</td><td id="stat-dims">—</td></tr>
+          <tr><td>Est. run time</td><td id="stat-time">—</td></tr>
+        </table>
+      </section>
+    </aside>
+  </div>
+
+  <!-- Bottom: simulator -->
+  <footer id="simbar">
+    <div class="sim-controls">
+      <button id="sim-start" class="btn" title="Jump to start">⏮</button>
+      <button id="sim-play" class="btn btn-primary" title="Play / pause">▶</button>
+      <button id="sim-end" class="btn" title="Jump to end">⏭</button>
+      <label class="sim-speed">Speed
+        <input type="range" id="sim-speed" min="1" max="200" value="40" />
+      </label>
+    </div>
+    <input type="range" id="sim-scrub" class="sim-scrub" min="0" max="0" value="0" />
+    <div class="sim-readout">
+      <span id="sim-stitch-idx">0 / 0</span>
+      <span id="sim-color" class="sim-color"></span>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
