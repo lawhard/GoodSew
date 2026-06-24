@@ -779,9 +779,11 @@ function boot() {
   // Lightweight debug hook used by the e2e test harness.
   window.__gs = {
     state,
+    sim,
     setTool,
+    setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
-    exportBytes: () => { ensureCompiled(); return exportPES(compiled, "GoodSew"); },
+    exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
   };
 }
 
