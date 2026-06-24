@@ -5,7 +5,7 @@
 import {
   resample, pathLength, sub, add, scale, norm, perp, dist, bbox,
   rotatePoint, sampleAt, contoursScanline, contoursBBox,
-  segmentInContours,
+  segmentInContours, classifyHoles, offsetContourInward,
 } from "./geometry.js";
 
 // --- Running stitch: evenly spaced stitches along the polyline. ---
@@ -57,19 +57,33 @@ export function generateFill(points, params) {
 
 // Multi-contour tatami fill (even-odd rule, so inner contours become holes).
 //
-// Returns an ARRAY OF SUBPATHS (each an array of {x,y} points). The fill is
-// HOLE-AWARE: two consecutive penetration points are only connected within the
-// same subpath when the segment between them stays strictly inside the filled
-// region. When the next point can't be reached by an interior segment (because
-// the connector would cross a counter/hole or exit a concave outline), a NEW
-// subpath is started so the compiler trims+jumps across the gap instead of
-// dragging a stitch across the hole.
+// Returns an ARRAY OF SUBPATHS (each an array of {x,y} points). The fill walks
+// a CONNECTED-COMPONENT serpentine: scan rows are cut into spans (even-odd),
+// vertically-adjacent spans that overlap in x are linked into connected
+// components, and each component is traversed as ONE continuous subpath. Travel
+// between consecutive spans therefore stays INSIDE the region (overlapping spans
+// guarantee an interior connector), so concave folds (a heart's notch) are sewn
+// without a jump across the fold. A NEW subpath (→ trim+jump by the compiler) is
+// started only between genuinely DISCONNECTED components (separate islands, or
+// across a counter/hole). Hole-aware via the even-odd scanline.
+//
+// Pull compensation: each span is inset inward from the region boundary by
+// `params.inset` mm (default ~0.2mm) at both ends so rendered thread (~0.4mm
+// wide) does not bleed over the outline or pinch shut thin apertures. Spans that
+// become too short to stitch after the inset are dropped (the inset is skipped
+// for a span only implicitly — short features just lose that row, never the
+// whole feature).
 export function fillContours(contours, params) {
   contours = contours.filter((c) => c.length >= 3);
   if (contours.length === 0) return [];
   const spacing = Math.max(0.25, params.spacing ?? 0.4);
   const stitchLen = Math.max(1, params.stitchLength ?? 3.0);
   const angle = ((params.angle || 0) * Math.PI) / 180;
+  const inset = Math.max(0, params.inset ?? 0.2);
+  // A span must keep at least this much length after the inset to be worth
+  // stitching; below it, drop the span (preserves thin apertures rather than
+  // bridging them, and avoids zero/negative-length spans).
+  const minSpan = Math.max(0.3, inset);
 
   // Rotate region so fill rows are horizontal, scan, then rotate stitches back.
   const bb = contoursBBox(contours);
@@ -77,66 +91,147 @@ export function fillContours(contours, params) {
   const rot = contours.map((poly) => poly.map((p) => rotatePoint(p, center, -angle)));
   const rb = contoursBBox(rot);
 
+  // rows[i] = array of spans; spans[k] = { x0, x1 } (x0 < x1, already inset).
+  // rowYs[i] = scan y of rows[i]; rowIdxs[i] = its index in the full scan order
+  // (used to detect non-adjacent rows so a row fully removed by inset breaks
+  // vertical connectivity — the desired behavior at a pinch/thin aperture).
   const rows = [];
+  const rowYs = [];
   let rowIndex = 0;
+  const rowIdxs = [];
   for (let y = rb.minY + spacing / 2; y < rb.maxY; y += spacing) {
     const xs = contoursScanline(rot, y);
-    // Pair up intersections into spans (even-odd fill rule).
     const spans = [];
     for (let k = 0; k + 1 < xs.length; k += 2) {
-      if (xs[k + 1] - xs[k] > 1e-6) spans.push([xs[k], xs[k + 1]]);
+      let x0 = xs[k], x1 = xs[k + 1];
+      if (x1 - x0 <= 1e-6) continue;
+      // Inset both ends; drop spans that collapse below the stitchable minimum.
+      const ix0 = x0 + inset, ix1 = x1 - inset;
+      if (ix1 - ix0 >= minSpan) spans.push({ x0: ix0, x1: ix1 });
     }
-    if (spans.length) rows.push({ y, spans, rowIndex });
+    if (spans.length) { rows.push(spans); rowYs.push(y); rowIdxs.push(rowIndex); }
     rowIndex++;
   }
+  if (rows.length === 0) return [];
 
-  // Build the stitch points for one span (in rotated space) with a brick-offset
+  const span = (ri, si) => rows[ri][si];
+  const id = (ri, si) => `${ri}:${si}`;
+
+  // Build the stitch points for one span (rotated space) with a brick-offset
   // phase so penetrations on adjacent rows don't line up into a visible ridge.
-  const spanPoints = (x0, x1, y, rowIndex) => {
+  // `dir` > 0 = left→right.
+  const spanPoints = (x0, x1, y, rIdx, dir) => {
     const segLen = Math.abs(x1 - x0);
     const n = Math.max(1, Math.round(segLen / stitchLen));
-    const phase = (rowIndex % 2) * (stitchLen / 2); // brick offset
-    const pts = [{ x: x0, y }];
+    const phase = (rIdx % 2) * (stitchLen / 2); // brick offset
+    const pts = [];
+    const lo = dir > 0 ? x0 : x1, hiSign = dir > 0 ? 1 : -1;
+    pts.push({ x: lo, y });
     for (let k = 1; k <= n; k++) {
       const t = (k * stitchLen + phase) / segLen;
       if (t >= 1) break;
-      pts.push({ x: x0 + (x1 - x0) * t, y });
+      pts.push({ x: lo + hiSign * segLen * t, y });
     }
-    pts.push({ x: x1, y });
+    pts.push({ x: dir > 0 ? x1 : x0, y });
     return pts;
   };
 
-  // Boustrophedon traversal. Order spans within a row by the current travel
-  // direction so the snake stays tight, and only stay in the same subpath when
-  // the connector to the next span/row stays inside the region.
-  const subs = [];
-  let cur = [];
-  let prev = null; // last emitted point (rotated space)
-  let dir = 1;
+  // --- Adjacency: vertically-overlapping spans linked by an interior connector.
+  // Used to walk the fill as a continuous serpentine. A naive row-by-row snake
+  // would, for a two-lobe row (a heart above its notch), connect the left lobe's
+  // span to the right lobe's across the NOTCH — an exiting jump. Instead we walk
+  // the adjacency GRAPH: descend a vertical chain, then continue to whatever
+  // unvisited neighbor is reachable by an interior connector. Each lobe is sewn
+  // down-and-up before crossing, so the connector never leaves the region.
+  const adj = new Map(); // id -> [{ ri, si }]
+  const addAdj = (a, b) => {
+    if (!adj.has(a)) adj.set(a, []);
+    adj.get(a).push(b);
+  };
+  for (let ri = 0; ri + 1 < rows.length; ri++) {
+    if (rowIdxs[ri + 1] - rowIdxs[ri] !== 1) continue;
+    for (let si = 0; si < rows[ri].length; si++) {
+      const A = span(ri, si);
+      for (let sj = 0; sj < rows[ri + 1].length; sj++) {
+        const B = span(ri + 1, sj);
+        const ov = Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0);
+        if (ov <= 1e-6) continue;
+        const sx = (Math.max(A.x0, B.x0) + Math.min(A.x1, B.x1)) / 2;
+        if (segmentInContours({ x: sx, y: rowYs[ri] }, { x: sx, y: rowYs[ri + 1] }, rot)) {
+          addAdj(id(ri, si), { ri: ri + 1, si: sj });
+          addAdj(id(ri + 1, sj), { ri, si });
+        }
+      }
+    }
+  }
 
-  const flush = () => {
-    if (cur.length >= 2) subs.push(cur);
-    cur = [];
+  // --- Walk each connected component as a continuous serpentine subpath. ---
+  const subs = [];
+  const visited = new Set();
+  // Stitch a span in travel direction `dir` (>0 left→right) and append, opening a
+  // new subpath if the interior connector from the previous point fails.
+  let cur = [];
+  let prev = null;
+  const flush = () => { if (cur.length >= 2) subs.push(cur); cur = []; prev = null; };
+  const emit = (ri, si, dir) => {
+    const S = span(ri, si);
+    const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
+    if (prev && !segmentInContours(prev, pts[0], rot)) flush();
+    cur.push(...pts);
+    prev = pts[pts.length - 1];
+    visited.add(id(ri, si));
+  };
+  // Pick the next unvisited span to continue to: prefer a neighbor of the current
+  // span (keeps the path local & interior), else fall back to scanning.
+  const reachableNeighbor = (ri, si) => {
+    const ns = adj.get(id(ri, si)) || [];
+    let best = null;
+    for (const n of ns) {
+      if (visited.has(id(n.ri, n.si))) continue;
+      // Prefer going DOWN, then by proximity, to keep a tidy vertical snake.
+      if (!best || n.ri > best.ri) best = n;
+    }
+    return best;
   };
 
-  for (const row of rows) {
-    const ordered = dir > 0 ? row.spans : row.spans.slice().reverse();
-    for (const span of ordered) {
-      const [x0, x1] = dir > 0 ? span : [span[1], span[0]];
-      const pts = spanPoints(x0, x1, row.y, row.rowIndex);
-      const head = pts[0];
-      // Decide whether we can connect from the previous point to this span's
-      // head with an ordinary stitch (segment must remain inside the region).
-      if (prev && !segmentInContours(prev, head, rot)) flush();
-      cur.push(...pts);
-      prev = pts[pts.length - 1];
+  // Seed order: spans top-to-bottom, left-to-right.
+  const seeds = [];
+  for (let ri = 0; ri < rows.length; ri++)
+    for (let si = 0; si < rows[ri].length; si++) seeds.push({ ri, si });
+  seeds.sort((a, b) => (a.ri - b.ri) || (span(a.ri, a.si).x0 - span(b.ri, b.si).x0));
+
+  for (const seed of seeds) {
+    if (visited.has(id(seed.ri, seed.si))) continue;
+    flush(); // new island / unreachable continuation → new subpath
+    let cur_ri = seed.ri, cur_si = seed.si, dir = 1;
+    while (cur_ri !== -1) {
+      emit(cur_ri, cur_si, dir);
+      dir = -dir;
+      // Continue along adjacency to an unvisited reachable neighbor.
+      let next = reachableNeighbor(cur_ri, cur_si);
+      if (!next) {
+        // Dead end in the local chain: hop to the nearest unvisited span in the
+        // SAME component still reachable by an interior connector from here.
+        next = null;
+        let bestD = Infinity;
+        for (let ri = 0; ri < rows.length; ri++) {
+          for (let si = 0; si < rows[ri].length; si++) {
+            if (visited.has(id(ri, si))) continue;
+            const S = span(ri, si);
+            const cx = (S.x0 + S.x1) / 2;
+            const here = { x: cx, y: rowYs[ri] };
+            const d = dist(prev, here);
+            if (d < bestD && segmentInContours(prev, here, rot)) { bestD = d; next = { ri, si }; }
+          }
+        }
+      }
+      if (next) { cur_ri = next.ri; cur_si = next.si; } else cur_ri = -1;
     }
-    dir = -dir;
   }
   flush();
 
   // Rotate every subpath back into design space.
-  return subs.map((sub) => sub.map((p) => rotatePoint(p, center, angle)));
+  return subs.map((s) => s.map((p) => rotatePoint(p, center, angle)));
 }
 
 // Optional zig-zag underlay for fills/satin: a sparse running outline pass that
@@ -151,10 +246,16 @@ export function generateUnderlay(points, inset = 1.0) {
 // polyline (the old approach) cuts corners; for a hole/counter boundary that
 // chord can dip INTO the hole. Resampling edge-by-edge keeps the walk exactly on
 // the outline, which is inherently hole-safe.
-function edgeWalk(contour, spacing) {
+//
+// `inset` (mm) pulls the walk just INSIDE the boundary (pull compensation) so the
+// rendered thread doesn't bleed over the edge and so every walked point lies
+// strictly inside the region. `region` (contours for an even-odd test) keeps the
+// inset from spiking outside at a sharp concave corner (e.g. a heart's notch).
+function edgeWalk(contour, spacing, inset = 0, region = null) {
   if (contour.length < 2) return [];
-  const out = [contour[0]];
-  const closed = [...contour, contour[0]];
+  const base = inset > 0 ? offsetContourInward(contour, inset, region) : contour;
+  const out = [base[0]];
+  const closed = [...base, base[0]];
   for (let i = 1; i < closed.length; i++) {
     const seg = resample([closed[i - 1], closed[i]], spacing);
     // resample includes the start point; skip it to avoid duplicates.
@@ -174,9 +275,10 @@ export function generateText(obj) {
   const subs = [];
   for (const contours of glyphs) {
     const moved = contours.map(shift);
-    // Fill each glyph with the same smart underlay + hole-aware tatami used for
-    // shapes, so lettering reads as solid, stabilized fill (not thin stripes).
-    for (const f of fillWithUnderlay(moved, obj.params)) {
+    // Fill each glyph with hole-aware tatami + a LIGHT underlay (outer edge run
+    // only; no perpendicular tatami) so small lettering stays crisp and counters
+    // stay open.
+    for (const f of fillWithUnderlay(moved, obj.params, { light: true })) {
       if (f.length) subs.push(f);
     }
     if (obj.params.outline) {
@@ -211,30 +313,47 @@ export function generateForObject(obj) {
 
 // Fill plus optional underlay, tuned so a freshly-rendered object looks good
 // with no manual tuning. Underlay (before the top fill):
-//   (a) an edge walk around each contour (~2.5mm running stitch) — walking the
-//       outline is inherently hole-safe, and
-//   (b) a low-density fill pass roughly perpendicular to the top fill (spacing
-//       ~1.8mm, angle = topAngle + 90) to stabilize the fabric.
+//   (a) an edge walk around each OUTER contour (~2.5mm running stitch). The walk
+//       runs ONLY on outer contours — never on holes/counters — so a letter's
+//       counter (the inside of an O/e/a/B/8) stays fully open instead of being
+//       ringed shut. Holes are classified by even-odd nesting.
+//   (b) for SHAPES, a low-density fill pass roughly perpendicular to the top
+//       fill (spacing ~1.8mm) to stabilize the fabric. Skipped for TEXT (the
+//       `light` option), where the perpendicular tatami muddies small lettering;
+//       the outer edge run alone is enough to keep letters crisp.
 // Then the top tatami fill (default spacing ~0.4mm, stitch length ~3.0mm, with
 // a brick offset between rows). All passes are hole-aware via fillContours.
-function fillWithUnderlay(contours, params) {
+//
+// `opts.light` (default false) → light underlay: outer edge walk only, no
+// perpendicular tatami. generateText passes light:true; shape fills do not.
+function fillWithUnderlay(contours, params, opts = {}) {
   const valid = contours.filter((c) => c.length >= 3);
   if (valid.length === 0) return [];
   const topAngle = params.angle ?? 0;
   const topSpacing = Math.max(0.25, params.spacing ?? 0.4);
+  const light = !!opts.light;
   const subs = [];
 
+  const inset = Math.max(0, params.inset ?? 0.2);
   if (params.underlay) {
-    // (a) Edge walk around each contour outline (closed loop, corner-preserving).
-    for (const c of valid) subs.push(edgeWalk(c, 2.5));
-    // (b) Perpendicular low-density stabilizing fill (hole-aware).
-    for (const f of fillContours(valid, {
-      ...params,
-      spacing: Math.max(1.8, topSpacing * 4),
-      stitchLength: Math.max(2.5, params.stitchLength ?? 3.0),
-      angle: topAngle + 90,
-    })) {
-      if (f.length) subs.push(f);
+    const isHole = classifyHoles(valid);
+    // (a) Edge walk around each OUTER contour outline (corner-preserving), pulled
+    //     just inside by the pull-comp inset so the run stays under the top fill
+    //     and never bleeds over the edge. Never walk holes/counters, or the
+    //     counter gets ringed shut.
+    for (let i = 0; i < valid.length; i++) {
+      if (!isHole[i]) subs.push(edgeWalk(valid[i], 2.5, inset, valid));
+    }
+    // (b) Perpendicular low-density stabilizing fill (hole-aware) — shapes only.
+    if (!light) {
+      for (const f of fillContours(valid, {
+        ...params,
+        spacing: Math.max(1.8, topSpacing * 4),
+        stitchLength: Math.max(2.5, params.stitchLength ?? 3.0),
+        angle: topAngle + 90,
+      })) {
+        if (f.length) subs.push(f);
+      }
     }
   }
 

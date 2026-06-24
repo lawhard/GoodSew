@@ -118,6 +118,76 @@ export function segmentInContours(a, b, contours, samples = 5) {
   return true;
 }
 
+// Signed area of a closed polygon (positive = CCW in a y-down system depends on
+// convention; we only use the SIGN to pick the inward normal direction).
+export function signedArea(poly) {
+  let a = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    a += poly[j].x * poly[i].y - poly[i].x * poly[j].y;
+  }
+  return a / 2;
+}
+
+// Offset a closed polygon INWARD by `d` mm. Each vertex moves along the inward
+// normal of its two adjacent edges (miter). Used to pull an edge-walk / outline
+// run just inside the boundary so rendered thread doesn't bleed over the edge.
+// `keepInside` (a region for even-odd point test) drops any offset vertex that
+// landed outside (a sharp concave spike can flip a miter outward).
+export function offsetContourInward(poly, d, region) {
+  if (poly.length < 3 || d <= 0) return poly.slice();
+  const reg = region || [poly];
+  const out = [];
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const prev = poly[(i - 1 + n) % n], cur = poly[i], next = poly[(i + 1) % n];
+    const e1 = norm(sub(cur, prev));
+    const e2 = norm(sub(next, cur));
+    // Angle bisector normal (averaged edge normals). Direction (inward vs
+    // outward) is ambiguous from winding alone at a concave/convex vertex, so we
+    // resolve it empirically: step a tiny amount each way and keep whichever
+    // lands inside the region.
+    const nrm = (e) => ({ x: -e.y, y: e.x });
+    const n1 = nrm(e1), n2 = nrm(e2);
+    let mx = n1.x + n2.x, my = n1.y + n2.y;
+    const ml = Math.hypot(mx, my);
+    if (ml < 1e-6) { mx = n1.x; my = n1.y; } else { mx /= ml; my /= ml; }
+    const cosHalf = Math.max(0.2, n1.x * mx + n1.y * my);
+    const step = Math.min(d / cosHalf, d * 3);
+    const probe = 1e-3;
+    const inSign =
+      pointInContours({ x: cur.x + mx * probe, y: cur.y + my * probe }, reg) ? 1
+      : pointInContours({ x: cur.x - mx * probe, y: cur.y - my * probe }, reg) ? -1
+      : 0;
+    if (inSign === 0) { out.push(cur); continue; } // on a thin spike — leave it
+    const p = { x: cur.x + inSign * mx * step, y: cur.y + inSign * my * step };
+    // Guard: the mitered offset can overshoot through a thin feature; keep it
+    // only if it stays inside, else leave the original vertex.
+    out.push(pointInContours(p, reg) ? p : cur);
+  }
+  return out;
+}
+
+// Classify each contour as OUTER or HOLE by even-odd nesting. A contour is a
+// HOLE when a point on its boundary lies inside an ODD number of the OTHER
+// contours (counters/holes nest one level deep inside an outer ring). Glyph
+// contours never cross, so a single boundary vertex is an unambiguous probe (a
+// centroid of an outer ring can land in its own counter and misclassify).
+// Returns a boolean array parallel to `contours`: true = hole.
+export function classifyHoles(contours) {
+  const isHole = new Array(contours.length).fill(false);
+  for (let i = 0; i < contours.length; i++) {
+    const probe = contours[i][0];
+    if (!probe) continue;
+    let depth = 0;
+    for (let j = 0; j < contours.length; j++) {
+      if (i === j) continue;
+      if (pointInPolygon(probe, contours[j])) depth++;
+    }
+    isHole[i] = depth % 2 === 1;
+  }
+  return isHole;
+}
+
 // Intersections of a horizontal line y=yc with polygon edges; returns sorted x's.
 export function scanlineIntersections(polygon, yc) {
   const xs = [];

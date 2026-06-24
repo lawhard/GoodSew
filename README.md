@@ -51,12 +51,16 @@ sensible, good-looking **default tatami fill** — no tuning required. From ther
 you can fine-tune each object's **density, stitch length, fill angle, underlay**
 and an optional **outline pass**, then simulate and export.
 
-- **Smart tatami fill** — boustrophedon traversal with a brick-offset stitch
-  phase for a natural texture, plus an **edge-walk + perpendicular underlay** so
-  the fill lies flat and looks good by default. It is fully **hole-aware**:
-  stitches never travel across letter counters (the insides of **O, U, e, a, B,
-  8**…) or concave gaps — those regions are split into separate trimmed/jumped
-  subpaths instead of being filled solid.
+- **Smart tatami fill** — a connected-component serpentine: spans are
+  linked across rows so the fill is sewn as one continuous path whose
+  travel stays **inside** the shape, so concave regions (a heart's notch,
+  etc.) fill cleanly with no jump across the fold. It is fully
+  **hole-aware** — stitches never travel across letter counters (the
+  insides of **O, U, e, a, B, 8**…); the edge underlay traces only outer
+  contours, never counters. A small **pull-compensation inset** keeps
+  thread inside the outline so it doesn't bleed over edges or pinch thin
+  apertures shut. Lettering gets a lighter underlay so small text stays
+  crisp.
 
 ### More
 - **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
