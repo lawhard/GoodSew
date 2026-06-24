@@ -8,7 +8,7 @@
 
 export const PRODUCTS = [
   { id: "tshirt",  label: "Medium T-Shirt", realW: 520, draw: drawTshirt,  zone: { x: 0.355, y: 0.40 } },
-  { id: "shoe",    label: "Shoe",           realW: 300, draw: drawShoe,    zone: { x: 0.55, y: 0.52 } },
+  { id: "shoe",    label: "Shoe",           realW: 300, draw: drawShoe,    zone: { x: 0.66, y: 0.45 } },
   { id: "towel",   label: "Towel",          realW: 500, draw: drawTowel,   zone: { x: 0.5, y: 0.72 } },
   { id: "bathmat", label: "Bath Mat",       realW: 600, draw: drawBathmat, zone: { x: 0.5, y: 0.5 } },
   { id: "custom",  label: "Custom Rectangle", realW: 300, draw: drawCustom, zone: { x: 0.5, y: 0.5 }, custom: true },
@@ -116,21 +116,58 @@ function drawTshirt(ctx, box, { realW }) {
 }
 
 function drawShoe(ctx, box, { realW }) {
+  // Left-facing sneaker side profile: toe at left, heel at right.
   const w = box.w, h = box.h;
-  const x = box.x, baseY = box.y + h * 0.72;
-  const len = w * 0.92, ht = h * 0.42;
+  const len = w * 0.94;
   const sx = box.x + (w - len) / 2;
-  ctx.fillStyle = "#dfe5ec"; ctx.strokeStyle = "#b9c2cd"; ctx.lineWidth = 2;
+  const ht = Math.min(h * 0.5, len * 0.5);
+  const baseY = box.y + h * 0.64;          // top of sole
+  const L = (fx, fy) => ({ x: sx + len * fx, y: baseY - ht * fy });
+
+  // Upper.
+  ctx.fillStyle = "#e2e8ef"; ctx.strokeStyle = "#b3bcc8"; ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(sx, baseY);
-  ctx.lineTo(sx, baseY - ht * 0.5);
-  ctx.quadraticCurveTo(sx + len * 0.30, baseY - ht * 1.15, sx + len * 0.52, baseY - ht * 0.95);
-  ctx.quadraticCurveTo(sx + len * 0.74, baseY - ht * 0.8, sx + len, baseY - ht * 0.35);
-  ctx.lineTo(sx + len, baseY);
+  let p = L(0.02, 0.02); ctx.moveTo(p.x, p.y);              // toe bottom-front
+  ctx.quadraticCurveTo(sx + len * 0.0, baseY - ht * 0.42, (p = L(0.10, 0.50)).x, p.y); // toe cap
+  ctx.quadraticCurveTo(sx + len * 0.26, baseY - ht * 0.66, (p = L(0.45, 0.60)).x, p.y); // vamp
+  ctx.lineTo((p = L(0.52, 1.02)).x, p.y);                   // tongue front up
+  ctx.quadraticCurveTo(sx + len * 0.60, baseY - ht * 1.06, (p = L(0.74, 1.00)).x, p.y); // collar top
+  ctx.quadraticCurveTo(sx + len * 0.86, baseY - ht * 0.98, (p = L(0.92, 0.62)).x, p.y); // heel curve
+  ctx.quadraticCurveTo(sx + len * 1.0, baseY - ht * 0.40, (p = L(1.0, 0.05)).x, p.y);  // heel back
   ctx.closePath(); ctx.fill(); ctx.stroke();
-  // sole
-  ctx.fillStyle = "#aeb7c2";
-  ctx.fillRect(sx, baseY, len, ht * 0.16);
+
+  // Tongue.
+  ctx.fillStyle = "#d6dde6";
+  ctx.beginPath();
+  p = L(0.46, 0.60); ctx.moveTo(p.x, p.y);
+  ctx.lineTo((p = L(0.50, 1.04)).x, p.y);
+  ctx.lineTo((p = L(0.58, 1.02)).x, p.y);
+  ctx.lineTo((p = L(0.55, 0.60)).x, p.y);
+  ctx.closePath(); ctx.fill();
+
+  // Laces across the vamp.
+  ctx.strokeStyle = "#9aa6b4"; ctx.lineWidth = 2.2;
+  for (let i = 0; i < 4; i++) {
+    const t = 0.50 + i * 0.045;
+    const a = L(t, 0.66 + i * 0.08), b = L(t + 0.06, 0.62 + i * 0.08);
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+  }
+
+  // Sole with a slight toe upturn + tread ticks.
+  const soleH = ht * 0.22;
+  ctx.fillStyle = "#b9c2cd"; ctx.strokeStyle = "#aab4c0";
+  ctx.beginPath();
+  ctx.moveTo(sx + len * 0.02, baseY - ht * 0.04);
+  ctx.quadraticCurveTo(sx - len * 0.02, baseY + soleH * 0.5, sx + len * 0.12, baseY + soleH);
+  ctx.lineTo(sx + len * 1.0, baseY + soleH);
+  ctx.lineTo(sx + len * 1.0, baseY + ht * 0.02);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = "rgba(120,132,146,0.6)"; ctx.lineWidth = 1.4;
+  for (let i = 1; i < 9; i++) {
+    const xx = sx + len * (0.12 + i * 0.095);
+    ctx.beginPath(); ctx.moveTo(xx, baseY + soleH * 0.25); ctx.lineTo(xx, baseY + soleH * 0.85); ctx.stroke();
+  }
+
   return { x: sx, y: baseY - ht, w: len, h: ht, spanMm: realW };
 }
 
