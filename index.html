@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSew — SE700 Embroidery Designer</title>
-  <link rel="stylesheet" href="css/styles.css?v=0.4.3" />
+  <link rel="stylesheet" href="css/styles.css?v=0.4.4" />
 </head>
 <body data-mode="design" data-theme="light">
   <header id="topbar">
@@ -32,6 +32,7 @@
       <!-- stitch phase -->
       <button id="btn-back" class="btn mode-stitch" title="Back to editing">← Edit Design</button>
       <button id="btn-preview" class="btn mode-stitch" title="Preview on a product">Preview</button>
+      <button id="btn-export-dst" class="btn mode-stitch" title="Export to Tajima DST (universal)">Export DST</button>
       <button id="btn-export-pes" class="btn btn-primary mode-stitch" title="Export to Brother PES">Export PES</button>
 
       <span class="sep"></span>
@@ -88,7 +89,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.4.3</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.4.4</div>
     </main>
 
     <!-- Right -->
@@ -193,6 +194,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.4.3"></script>
+  <script type="module" src="js/app.js?v=0.4.4"></script>
 </body>
 </html>

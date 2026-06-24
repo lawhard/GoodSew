@@ -10,6 +10,7 @@ import { BROTHER_PALETTE, rgbToHex } from "./threads.js";
 import { compile } from "./compiler.js";
 import { computeStats, formatTime } from "./stats.js";
 import { exportPES } from "./export/pes.js";
+import { exportDST } from "./export/dst.js";
 import { Camera, render, RULER, getObjBox, boxHandlesWorld } from "./render.js";
 import { Simulator } from "./simulator.js";
 import { dist, bbox, rotatePoint, pointInPolygon } from "./geometry.js";
@@ -18,7 +19,7 @@ import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
-const APP_VERSION = "0.4.3"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.4"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -974,6 +975,15 @@ $("btn-export-pes").onclick = () => {
   toast(`Exported design.pes — ${st.stitches.toLocaleString()} stitches, ${st.threadColors} colors`);
 };
 
+$("btn-export-dst").onclick = () => {
+  ensureCompiled();
+  const st = computeStats(compiled);
+  if (st.stitches === 0) { toast("Nothing to export — render first.", true); return; }
+  const bytes = exportDST(compiled);
+  download(bytes, "design.dst", "application/octet-stream");
+  toast(`Exported design.dst — ${st.stitches.toLocaleString()} stitches (Tajima, universal)`);
+};
+
 // ----------------------------------------------------------------- helpers
 function download(data, filename, mime) {
   const blob = new Blob([data], { type: mime });
@@ -1036,6 +1046,7 @@ function boot() {
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; state.selectedId = o.id; return selectionHandlesScreen(o); },
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
     exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
+    exportDSTBytes: () => { ensureCompiled(); return Array.from(exportDST(compiled)); },
   };
 }
 

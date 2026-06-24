@@ -93,7 +93,17 @@ machine does. The simulator plays it back so you can verify before you stitch:
   jump/trim counts, and a run-time estimate that accounts for sewing speed,
   colour-change pauses and trim cycles.
 
-### PES export
+### Tie-offs
+Every fresh thread run starts with a tie-in lock stitch and every trim / color
+change / design end is preceded by a tie-off, so the stitching is secured and
+won't unravel on the machine.
+
+### Export — PES & DST
+Two formats: **Brother PES v1** (the SE700's native format) and **Tajima DST**
+(the universal format read by virtually every machine and digitizer). Both are
+verified by reading the written file back with **pyembroidery**.
+
+#### PES export
 Exports a **Brother PES v1** file with an embedded **PEC** block — the format the
 SE700 reads off USB. The writer is byte-accurate to the pyembroidery
 specification:
@@ -150,7 +160,8 @@ node test/text.test.mjs       # font → glyph contours (with holes) → fill st
 node test/fill.test.mjs       # hole-aware fill: zero stitches cross letter counters
 node test/ui.e2e.mjs          # real-browser: design tools, handles, render, export
 node test/workflow.e2e.mjs    # real-browser: full design→render→simulate→export
-node test/gen_pes.mjs && python3 test/verify_pes.py   # machine-format check
+node test/gen_pes.mjs && python3 test/verify_pes.py   # PES machine-format check
+node test/gen_dst.mjs && python3 test/verify_dst.py   # DST machine-format check
 ```
 
 - **pipeline** — compiles a multi-colour design, checks the stitch plan and
