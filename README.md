@@ -42,6 +42,10 @@ recommended so ES modules load cleanly.)
   script, display) rendered to true glyph outlines (via opentype.js) and filled
   as tatami, with adjustable height, letter spacing, fill angle and an optional
   outline pass. Each glyph is trimmed/jumped independently.
+- **Product preview** — see the design composited at *true physical scale* onto
+  a medium t-shirt (left chest), shoe, towel, bath mat, or a custom rectangle
+  whose dimensions you type in, so you can judge real size and placement before
+  stitching.
 - **Background image tracing** — import any image and trace over it.
 - **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
   zoom/pan, a live cursor position marker, and draggable guide lines: pull a
@@ -119,6 +123,7 @@ test/*.test.mjs, test/ui.e2e.mjs   automated tests
 node test/pipeline.test.mjs   # compile → stats → PES, decode PEC round-trip
 node test/text.test.mjs       # font → glyph contours (with holes) → fill stitches
 node test/ui.e2e.mjs          # real-browser: rulers, guides, shapes, text, export
+node test/gen_pes.mjs && python3 test/verify_pes.py   # machine-format check
 ```
 
 - **pipeline** — compiles a multi-colour design, checks the stitch plan and
@@ -129,6 +134,11 @@ node test/ui.e2e.mjs          # real-browser: rulers, guides, shapes, text, expo
 - **e2e** — drives the app in headless Chrome to verify draggable ruler guides,
   shape drawing, text placement and PES export with no console errors. Requires
   a local static server on :8137 and `puppeteer-core` (`npm i puppeteer-core`).
+- **verify_pes** — the most important check: reads an exported PES back with
+  **pyembroidery** (an independent library that mirrors how the machine parses
+  the file) and confirms every stitch position, the bounding box, the colors and
+  the command structure (stitch / jump / trim / color-change / end) match the
+  source plan exactly. Requires `pip install pyembroidery`.
 
 ## Disclaimer
 Always preview a new design on stabilizer/scrap before stitching on your final

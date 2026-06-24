@@ -4,7 +4,6 @@ node_modules/
 .DS_Store
 
 chrome-headless-shell/
-scratch-shot.png
-scratch-e2e.png
 package.json
 package-lock.json
+scratch-*.png

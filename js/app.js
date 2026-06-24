@@ -12,6 +12,7 @@ import { dist, bbox } from "./geometry.js";
 import { SHAPES, buildShape } from "./shapes.js";
 import { FONTS, loadFont, textToGlyphs } from "./fonts.js";
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
+import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -655,6 +656,58 @@ document.getElementById("file-json").onchange = (e) => {
   };
   reader.readAsText(f);
 };
+
+// ----------------------------------------------------------------- preview
+let previewProduct = "tshirt";
+function buildPreviewProducts() {
+  const host = document.getElementById("preview-products");
+  host.innerHTML = "";
+  for (const p of PRODUCTS) {
+    const b = document.createElement("button");
+    b.className = "pp-btn" + (p.id === previewProduct ? " active" : "");
+    b.textContent = p.label;
+    b.onclick = () => { previewProduct = p.id; buildPreviewProducts(); drawPreview(); };
+    host.appendChild(b);
+  }
+  document.getElementById("preview-custom").classList.toggle("hidden", getProduct(previewProduct).custom !== true);
+}
+
+function drawPreview() {
+  ensureCompiled();
+  const canvas = document.getElementById("preview-canvas");
+  const r = canvas.getBoundingClientRect();
+  canvas.width = Math.round(r.width * devicePixelRatio);
+  canvas.height = Math.round(r.height * devicePixelRatio);
+  const ctx = canvas.getContext("2d");
+  const product = getProduct(previewProduct);
+  const cu = state.units;
+  const customW = fromUnit(parseFloat(document.getElementById("custom-w").value) || 6, cu);
+  const customH = fromUnit(parseFloat(document.getElementById("custom-h").value) || 4, cu);
+  renderPreview(ctx, compiled, product, { customW, customH });
+
+  const st = computeStats(compiled);
+  document.getElementById("preview-scale").textContent =
+    st.width > 0 ? `— design ${fmt(st.width, cu)} × ${fmt(st.height, cu)}` : "";
+  document.getElementById("custom-unit").textContent = cu;
+}
+
+function openPreview() {
+  ensureCompiled();
+  const st = computeStats(compiled);
+  if (st.stitches === 0) { toast("Nothing to preview — draw something first.", true); return; }
+  document.getElementById("preview-modal").classList.remove("hidden");
+  buildPreviewProducts();
+  requestAnimationFrame(drawPreview); // after layout
+}
+
+document.getElementById("btn-preview").onclick = openPreview;
+document.getElementById("preview-close").onclick = () =>
+  document.getElementById("preview-modal").classList.add("hidden");
+document.getElementById("preview-modal").addEventListener("click", (e) => {
+  if (e.target.id === "preview-modal") e.currentTarget.classList.add("hidden");
+});
+document.getElementById("custom-w").oninput = drawPreview;
+document.getElementById("custom-h").oninput = drawPreview;
 
 document.getElementById("btn-export-pes").onclick = () => {
   ensureCompiled();

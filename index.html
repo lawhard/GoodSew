@@ -18,6 +18,7 @@
       <button id="btn-import-image" class="btn" title="Import a background image to trace">Import Image…</button>
       <button id="btn-save-json" class="btn" title="Save project (.gsew JSON)">Save</button>
       <button id="btn-load-json" class="btn" title="Open project (.gsew JSON)">Open</button>
+      <button id="btn-preview" class="btn" title="Preview on a product">Preview</button>
       <button id="btn-export-pes" class="btn btn-primary" title="Export to Brother PES">Export PES</button>
       <input type="file" id="file-image" accept="image/*" hidden />
       <input type="file" id="file-json" accept=".gsew,.json,application/json" hidden />
@@ -121,6 +122,27 @@
       <span id="sim-color" class="sim-color"></span>
     </div>
   </footer>
+
+  <div id="preview-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Product Preview <span class="muted" id="preview-scale"></span></h2>
+        <button id="preview-close" class="btn">✕ Close</button>
+      </div>
+      <div class="modal-body">
+        <div class="preview-products" id="preview-products"></div>
+        <canvas id="preview-canvas"></canvas>
+      </div>
+      <div class="modal-foot">
+        <div id="preview-custom" class="custom-dims hidden">
+          <label>Width <input type="number" id="custom-w" value="6" step="0.1" min="1"></label>
+          <label>Height <input type="number" id="custom-h" value="4" step="0.1" min="1"></label>
+          <span id="custom-unit" class="muted">in</span>
+        </div>
+        <div class="muted" id="preview-note">Design shown at true size relative to the item.</div>
+      </div>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
 
