@@ -1,9 +1,11 @@
 # GoodSew — Brother SE700 Embroidery Digitizer
 
-A fully in-browser embroidery digitizing studio built **exclusively for the
-Brother SE700**. Draw shapes and lettering, turn them into real machine stitches,
-watch the design sew out in a simulator, and export a `.pes` file the machine can
-read — all client-side, with no build step and no server.
+A fully in-browser embroidery designer built **exclusively for the Brother
+SE700**. It works in two simple phases: **① Design** — lay out text and shapes
+as solid, WYSIWYG artwork and arrange them like you would in Word or an image
+markup tool; then **② Render** — one button turns your layout into real machine
+stitches that you can fine-tune, watch sew out in a simulator, and export as a
+`.pes` file the machine reads. All client-side, no build step, no server.
 
 The whole app is tied to the SE700's real capabilities: a **4" × 4"
 (100 × 100 mm)** embroidery field and a **710 spm** maximum speed (used in the
@@ -26,28 +28,43 @@ recommended so ES modules load cleanly.)
 
 ## Features
 
-### Digitizing tools
-- **Running stitch** — evenly spaced stitches along a path, with adjustable
-  stitch length and repeat passes (bean stitch).
-- **Satin column** — zig-zag column drawn along a centre spine, with adjustable
-  width and density.
-- **Tatami fill** — parallel-row fill of a closed region with adjustable row
-  spacing, stitch length and angle, using a boustrophedon traversal and a
-  brick-offset stitch phase for a natural tatami texture. Handles **holes**
-  (multi-contour even-odd) so letters and rings fill correctly.
-- **Shapes** — rectangle, rounded rectangle, ellipse/circle, triangle, diamond,
-  pentagon, hexagon, 5/6-point stars, heart and line. Drag to draw; each becomes
-  an editable filled or outlined object.
-- **Lettering** — a suite of 11 embroidery-friendly fonts (sans, slab, serif,
-  script, display) rendered to true glyph outlines (via opentype.js) and filled
-  as tatami, with adjustable height, letter spacing, fill angle and an optional
-  outline pass. Each glyph is trimmed/jumped independently.
+### ① Design phase — lay it out
+Objects are shown as **solid vector art** (not stitches), so you can see exactly
+what you're making. Select / move with the mouse, drag the **8 resize handles**
+to scale (hold **Shift** for even/locked aspect), and use the **rotate knob** to
+spin. Everything is meant to feel like Word or an image markup tool.
+
+- **Text** — click to drop, then just type. **Double-click** any text to edit it
+  in place. A prominent **Font Library** shows all 11 embroidery-friendly fonts
+  rendered live with your own words so you can pick visually. Make text **bold /
+  italic / underlined**, bend it into an **arc or full circle**, set its size and
+  rotation, and recolor it — all from a clean properties panel.
+- **Shapes** — a visual picker (not a dropdown): rectangle, rounded rectangle,
+  ellipse/circle, triangle, diamond, pentagon, hexagon, 5/6-point stars and
+  heart. Pick one, drag to place (Shift for an even shape), then resize/rotate
+  like anything else. Filled or outline-only.
+- **Background image tracing** — import any image and lay artwork over it.
+
+### ② Render phase — stitch it
+Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a
+sensible, good-looking **default tatami fill** — no tuning required. From there
+you can fine-tune each object's **density, stitch length, fill angle, underlay**
+and an optional **outline pass**, then simulate and export.
+
+- **Smart tatami fill** — boustrophedon traversal with a brick-offset stitch
+  phase for a natural texture, plus an **edge-walk + perpendicular underlay** so
+  the fill lies flat and looks good by default. It is fully **hole-aware**:
+  stitches never travel across letter counters (the insides of **O, U, e, a, B,
+  8**…) or concave gaps — those regions are split into separate trimmed/jumped
+  subpaths instead of being filled solid.
+
+### More
+- **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
 - **Product preview** — see the design composited at *true physical scale* onto
   a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom
   rectangle whose dimensions you type in. Each mockup is drawn to real-world
   proportions, so the same design correctly reads tiny on a towel and prominent
   on a small swatch — a faithful sense of size and placement before stitching.
-- **Background image tracing** — import any image and trace over it.
 - **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
   zoom/pan, a live cursor position marker, and draggable guide lines: pull a
   vertical guide from the top ruler or a horizontal guide from the left ruler;
@@ -102,14 +119,14 @@ js/
   app.js               controller: tools, interaction, panels, export wiring
   state.js             design data model + serialization
   geometry.js          vector math (resample, scanline, rotate, hit-test)
-  stitches.js          running / satin / tatami-fill (multi-contour) generators
+  stitches.js          hole-aware tatami-fill (+ underlay) & text generators
   shapes.js            shape preset outline polygons
-  fonts.js             font catalog + text → glyph-contour conversion
+  fonts.js             font catalog + text → glyph contours (bold/italic/arc)
   compiler.js          objects → ordered stitch plan (order, jumps, trims, colors)
   stats.js             stitch/jump/trim counts + run-time estimate (710 spm)
   threads.js           Brother 64-colour palette + nearest-colour matching
   hoop.js              SE700 capabilities (100×100 mm field, 710 spm)
-  render.js            Canvas: rulers, guides, hoop, grid, stitches, needle head
+  render.js            Canvas: light/dark themes, design solids + handles, stitches
   simulator.js         stitch-out playback engine
   export/pes.js        byte-accurate PES v1 + PEC writer
 vendor/opentype.min.js     opentype.js (MIT) — glyph outline parsing
@@ -123,7 +140,9 @@ test/*.test.mjs, test/ui.e2e.mjs   automated tests
 ```bash
 node test/pipeline.test.mjs   # compile → stats → PES, decode PEC round-trip
 node test/text.test.mjs       # font → glyph contours (with holes) → fill stitches
-node test/ui.e2e.mjs          # real-browser: rulers, guides, shapes, text, export
+node test/fill.test.mjs       # hole-aware fill: zero stitches cross letter counters
+node test/ui.e2e.mjs          # real-browser: design tools, handles, render, export
+node test/workflow.e2e.mjs    # real-browser: full design→render→simulate→export
 node test/gen_pes.mjs && python3 test/verify_pes.py   # machine-format check
 ```
 
@@ -132,9 +151,14 @@ node test/gen_pes.mjs && python3 test/verify_pes.py   # machine-format check
   confirm the bounding box round-trips (validates the delta encoder).
 - **text** — loads a font, converts text to glyph contours (verifying letter
   counters become holes), and fills it to stitches.
-- **e2e** — drives the app in headless Chrome to verify draggable ruler guides,
-  shape drawing, text placement and PES export with no console errors. Requires
-  a local static server on :8137 and `puppeteer-core` (`npm i puppeteer-core`).
+- **fill** — generates fills for holed glyphs (O, U, e, a, B, 8, "good") across
+  fonts and asserts that **zero** stitch segments ever cross a counter — the
+  regression guard for the hole-aware fill.
+- **e2e / workflow** — drive the app in headless Chrome through the two-phase UI:
+  design tools, select/move/resize/rotate handles, the font library, the Render
+  step, the simulator, preview and PES export — all with no console errors.
+  Require a local static server on :8137 and `puppeteer-core`
+  (`npm i puppeteer-core`).
 - **verify_pes** — the most important check: reads an exported PES back with
   **pyembroidery** (an independent library that mirrors how the machine parses
   the file) and confirms every stitch position, the bounding box, the colors and

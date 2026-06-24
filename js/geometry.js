@@ -94,6 +94,30 @@ export function pointInPolygon(pt, polygon) {
   return inside;
 }
 
+// Point-in-region test over MANY contours using the even-odd rule. Outer
+// contours fill; nested (counter) contours carve holes. Returns true if `pt`
+// lies in the filled region (outside any hole).
+export function pointInContours(pt, contours) {
+  let inside = false;
+  for (const poly of contours) {
+    if (pointInPolygon(pt, poly)) inside = !inside;
+  }
+  return inside;
+}
+
+// True if the straight segment a→b stays inside the filled region (even-odd).
+// We sample the midpoint plus a few interior points; a single midpoint test can
+// miss a thin hole that the segment grazes. Endpoints are skipped since they sit
+// on the boundary (penetration points lie exactly on contour edges).
+export function segmentInContours(a, b, contours, samples = 5) {
+  for (let i = 1; i <= samples; i++) {
+    const t = i / (samples + 1);
+    const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    if (!pointInContours(p, contours)) return false;
+  }
+  return true;
+}
+
 // Intersections of a horizontal line y=yc with polygon edges; returns sorted x's.
 export function scanlineIntersections(polygon, yc) {
   const xs = [];

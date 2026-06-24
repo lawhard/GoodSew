@@ -1,16 +1,20 @@
-// GoodSew — SE700 embroidery digitizer. Main application controller.
+// GoodSew — SE700 embroidery designer. Main application controller.
+//
+// Two phases:
+//   design : lay out solid vector objects (text + shapes), move/resize/rotate.
+//   stitch : "Render" compiles objects into a stitch plan to simulate & export.
 
-import { state, makeObject, selectedObject, markDirty, serialize, deserialize, nextId } from "./state.js";
+import { state, makeObject, selectedObject, markDirty, serialize, deserialize, nextId, defaultParams } from "./state.js";
 import { HOOPS, getHoop, SE700 } from "./hoop.js";
 import { BROTHER_PALETTE, rgbToHex } from "./threads.js";
 import { compile } from "./compiler.js";
 import { computeStats, formatTime } from "./stats.js";
 import { exportPES } from "./export/pes.js";
-import { Camera, render, RULER } from "./render.js";
+import { Camera, render, RULER, getObjBox, boxHandlesWorld } from "./render.js";
 import { Simulator } from "./simulator.js";
-import { dist, bbox } from "./geometry.js";
+import { dist, bbox, rotatePoint, pointInPolygon } from "./geometry.js";
 import { SHAPES, buildShape } from "./shapes.js";
-import { FONTS, loadFont, textToGlyphs } from "./fonts.js";
+import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js";
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
@@ -18,33 +22,33 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const cam = new Camera();
 
-const view = {
-  showImage: true, showStitches: true, showJumps: true, showPoints: false, showGrid: true,
-};
+const view = { showImage: true, showStitches: true, showJumps: true, showPoints: false, showGrid: true };
 
 let compiled = null;
 let tool = "select";
-let draft = null;          // in-progress object being drawn
-let drag = null;           // { mode:'object'|'node'|'pan'|'guide'|'shape', ... }
+let drag = null;
 let needsRender = true;
 let spaceDown = false;
-let cursor = null;         // { sx, sy } screen px of pointer
-let hoverGuide = null;     // guide under pointer (for highlight)
+let shiftDown = false;
+let cursor = null;
+let hoverGuide = null;
 let shapeKind = "rect";
-let shapeStyle = "fill";
+
+const $ = (id) => document.getElementById(id);
+const rad = (d) => (d * Math.PI) / 180;
+const rotVec = (v, a) => ({ x: v.x * Math.cos(a) - v.y * Math.sin(a), y: v.x * Math.sin(a) + v.y * Math.cos(a) });
 
 const sim = new Simulator((s) => {
-  document.getElementById("sim-scrub").value = s.index;
-  document.getElementById("sim-stitch-idx").textContent =
-    `${s.index} / ${s.total}`;
-  document.getElementById("sim-play").textContent = s.playing ? "⏸" : "▶";
+  $("sim-scrub").value = s.index;
+  $("sim-stitch-idx").textContent = `${s.index} / ${s.total}`;
+  $("sim-play").textContent = s.playing ? "⏸" : "▶";
   updateSimColor(s);
   needsRender = true;
 });
 
 // ---------------------------------------------------------------- canvas size
 function resize() {
-  const wrap = document.getElementById("canvas-wrap");
+  const wrap = $("canvas-wrap");
   const r = wrap.getBoundingClientRect();
   canvas.style.width = r.width + "px";
   canvas.style.height = r.height + "px";
@@ -55,30 +59,128 @@ function resize() {
 }
 window.addEventListener("resize", resize);
 
-// ----------------------------------------------------------------- recompile
+// ----------------------------------------------------------------- compile
 function recompile() {
   compiled = compile();
   state.plan = compiled;
   state.planDirty = false;
   sim.setPlan(compiled.plan);
-  document.getElementById("sim-scrub").max = compiled.plan.length;
+  $("sim-scrub").max = compiled.plan.length;
   refreshStats();
   needsRender = true;
 }
-
-function ensureCompiled() {
-  if (state.planDirty || !compiled) recompile();
-}
+function ensureCompiled() { if (state.planDirty || !compiled) recompile(); }
 
 function refreshStats() {
+  if (!compiled) return;
   const st = computeStats(compiled);
-  document.getElementById("stat-stitches").textContent = st.stitches.toLocaleString();
-  document.getElementById("stat-colors").textContent = st.colorChanges;
-  document.getElementById("stat-jumps").textContent = st.jumps;
-  document.getElementById("stat-trims").textContent = st.trims;
-  document.getElementById("stat-dims").textContent =
-    st.width > 0 ? `${fmt(st.width, state.units)} × ${fmt(st.height, state.units)}` : "—";
-  document.getElementById("stat-time").textContent = formatTime(st.seconds);
+  $("stat-stitches").textContent = st.stitches.toLocaleString();
+  $("stat-colors").textContent = st.colorChanges;
+  $("stat-jumps").textContent = st.jumps;
+  $("stat-trims").textContent = st.trims;
+  $("stat-dims").textContent = st.width > 0 ? `${fmt(st.width, state.units)} × ${fmt(st.height, state.units)}` : "—";
+  $("stat-time").textContent = formatTime(st.seconds);
+}
+
+// ------------------------------------------------------------ object baking
+function rebuildShape(obj) {
+  if (!obj.box) return;
+  let pts = buildShape(obj.kind || "rect", obj.box);
+  const a = rad(obj.rotation || 0);
+  if (a) {
+    const c = { x: obj.box.x + obj.box.w / 2, y: obj.box.y + obj.box.h / 2 };
+    pts = pts.map((p) => rotatePoint(p, c, a));
+  }
+  obj.points = pts;
+}
+
+// Build cached glyph contours for a text object. Synchronous when the font is
+// already loaded; otherwise loads then re-bakes.
+function bakeText(obj, after) {
+  const font = loadedFont(obj.params.font);
+  if (!font) {
+    loadFont(obj.params.font).then(() => { bakeText(obj, after); markDirty(); refreshObjectList(); needsRender = true; })
+      .catch((err) => toast("Font load failed: " + err.message, true));
+    return;
+  }
+  const p = obj.params;
+  const r = textToGlyphs(font, p.text || "", p.size, {
+    letterSpacing: p.letterSpacing || 0, bold: p.bold, italic: p.italic, underline: p.underline, curve: (p.curve || 0) / 100,
+  });
+  const lb = r.bbox;
+  obj._localBox = { minX: lb.minX, minY: lb.minY, w: lb.w, h: lb.h };
+  obj._textW = r.width;
+  const a = rad(obj.rotation || 0);
+  if (a) {
+    const cx = lb.minX + lb.w / 2, cy = lb.minY + lb.h / 2, c = { x: cx, y: cy };
+    obj._glyphs = r.glyphs.map((cs) => cs.map((c2) => c2.map((pt) => rotatePoint(pt, c, a))));
+  } else {
+    obj._glyphs = r.glyphs;
+  }
+  if (after) after();
+}
+
+// ----------------------------------------------------------------- modes
+function setMode(mode) {
+  state.mode = mode;
+  document.body.dataset.mode = mode;
+  if (mode === "stitch") { ensureCompiled(); sim.toStart(); sim.engaged = false; sim.seek(0); sim.engaged = false; needsRender = true; }
+  setTool("select");
+  refreshProps();
+  updateEmptyHint();
+  needsRender = true;
+}
+
+async function renderStitches() {
+  if (!state.objects.length) { toast("Add some text or shapes first.", true); return; }
+  // Make sure every text object's font is loaded & baked before compiling.
+  const texts = state.objects.filter((o) => o.type === "text");
+  await Promise.all(texts.map((o) => loadFont(o.params.font).then(() => bakeText(o)).catch(() => {})));
+  markDirty();
+  setMode("stitch");
+  recompile();
+  const st = computeStats(compiled);
+  if (st.stitches === 0) { toast("Nothing rendered — check your objects.", true); }
+}
+
+// ----------------------------------------------------------------- tools
+function setTool(t) {
+  if (t !== "shape") $("shape-popover").classList.add("hidden");
+  if (t === "image") { $("file-image").click(); return; }
+  tool = t;
+  document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
+  const hints = {
+    select: "Click to select. Drag to move. Drag handles to resize, top knob to rotate. Double-click text to edit.",
+    text: "Click on the canvas to drop your text, then type.",
+    shape: "Pick a shape, then drag on the canvas. Hold Shift for an even shape.",
+  };
+  $("hud-hint").textContent = hints[t] || "";
+  canvas.style.cursor = t === "select" ? "default" : "crosshair";
+  if (t === "shape") openShapePopover();
+}
+
+// ----------------------------------------------------------------- creators
+function addText(anchor) {
+  const obj = makeObject("text", [anchor], state.activeColor);
+  obj.name = "Text";
+  obj.params.text = "Text";
+  state.objects.push(obj);
+  state.selectedId = obj.id;
+  bakeText(obj, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; });
+  setTool("select");
+  refreshObjectList(); refreshProps(); updateEmptyHint();
+}
+
+function addShape(kind, box) {
+  const obj = makeObject("fill", [], state.activeColor);
+  obj.kind = kind;
+  obj.box = { ...box };
+  obj.name = SHAPES.find((s) => s.kind === kind)?.label || "Shape";
+  rebuildShape(obj);
+  state.objects.push(obj);
+  state.selectedId = obj.id;
+  markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint();
+  return obj;
 }
 
 // ------------------------------------------------------------- coordinate map
@@ -87,239 +189,217 @@ function mouseWorld(e) {
   return cam.toWorld({ x: e.clientX - r.left, y: e.clientY - r.top });
 }
 
-// ----------------------------------------------------------------- tools
-function setTool(t) {
-  if (draft) finalizeDraft();
-  tool = t;
-  document.querySelectorAll(".tool").forEach((b) =>
-    b.classList.toggle("active", b.dataset.tool === t));
-  const hints = {
-    select: "Click to select. Drag to move. Drag nodes to reshape. Del to remove.",
-    running: "Click to add points. Double-click or Enter to finish the path.",
-    satin: "Click along the column centre. Double-click/Enter to finish.",
-    fill: "Click to outline the region. Double-click/Enter to close & fill.",
-    shape: "Drag to draw the shape. Pick a kind & style on the left.",
-    text: "Click to place lettering, then edit the text & font on the right.",
-  };
-  document.getElementById("hud-hint").textContent = hints[t] || "";
-  canvas.style.cursor = t === "select" ? "default" : "crosshair";
-  const so = document.getElementById("shape-options");
-  if (so) so.hidden = t !== "shape";
-}
-
-// Place a new text object at world point and build its glyph outlines.
-function placeText(world) {
-  const obj = makeObject("text", [world], state.activeColor);
-  obj.name = "Text";
-  state.objects.push(obj);
-  state.selectedId = obj.id;
-  buildTextGlyphs(obj);
-  setTool("select");
-  refreshObjectList(); refreshObjectProps();
-}
-
-// (Re)build cached glyph contours for a text object, then recompile.
-async function buildTextGlyphs(obj) {
-  try {
-    const font = await loadFont(obj.params.font);
-    const r = textToGlyphs(font, obj.params.text || "", obj.params.size, {
-      letterSpacing: obj.params.letterSpacing || 0,
-    });
-    obj._glyphs = r.glyphs;
-    obj._textW = r.width;
-    markDirty(); recompile(); refreshObjectList(); needsRender = true;
-  } catch (err) {
-    toast("Font load failed: " + err.message, true);
-  }
-}
-
-function startOrExtendDraft(world) {
-  if (!draft) {
-    draft = makeObject(tool, [world], state.activeColor);
-    state.objects.push(draft);
-    state.selectedId = draft.id;
-  } else {
-    draft.points.push(world);
-  }
-  markDirty();
-  refreshObjectList();
-  refreshObjectProps();
-}
-
-function finalizeDraft() {
-  if (!draft) return;
-  const minPts = draft.type === "fill" ? 3 : 2;
-  if (draft.points.length < minPts) {
-    state.objects = state.objects.filter((o) => o !== draft);
-  }
-  draft = null;
-  markDirty();
-  ensureCompiled();
-  refreshObjectList();
-}
-
 // --------------------------------------------------------- mouse interaction
-const NODE_HIT_PX = 8;
+const HANDLE_HIT = 9;
+
+function selectionHandlesScreen(obj) {
+  const box = getObjBox(obj);
+  const h = boxHandlesWorld(box);
+  const out = {};
+  for (const k of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) out[k] = cam.toScreen(h[k]);
+  // rotate handle: above the top-mid edge
+  const nMid = cam.toScreen(h.n);
+  const swS = cam.toScreen(h.sw), nwS = cam.toScreen(h.nw);
+  const dx = nwS.x - swS.x, dy = nwS.y - swS.y, l = Math.hypot(dx, dy) || 1;
+  out.rotate = { x: nMid.x + (dx / l) * 22, y: nMid.y + (dy / l) * 22 };
+  out._box = box;
+  return out;
+}
+
+const OPP = { nw: "se", ne: "sw", se: "nw", sw: "ne", n: "s", s: "n", e: "w", w: "e" };
 
 canvas.addEventListener("mousedown", (e) => {
+  if (e.button === 2) return;
   const world = mouseWorld(e);
   const mx = e.offsetX, my = e.offsetY;
 
-  if (e.button === 1 || spaceDown) { // middle button / space-drag pan
+  if (e.button === 1 || spaceDown) {
     drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY };
     return;
   }
 
-  // Pull a new guide out of a ruler strip.
-  if (my < RULER && mx >= RULER) {
-    const g = { id: nextId(), axis: "x", pos: world.x };
-    state.guides.push(g);
-    drag = { mode: "guide", guide: g, isNew: true };
-    return;
-  }
-  if (mx < RULER && my >= RULER) {
-    const g = { id: nextId(), axis: "y", pos: world.y };
-    state.guides.push(g);
-    drag = { mode: "guide", guide: g, isNew: true };
-    return;
-  }
-  if (mx < RULER || my < RULER) return; // corner / dead zone
-
-  // Grab an existing guide to move it.
+  // ruler → guides
+  if (my < RULER && mx >= RULER) { const g = { id: nextId(), axis: "x", pos: world.x }; state.guides.push(g); drag = { mode: "guide", guide: g }; return; }
+  if (mx < RULER && my >= RULER) { const g = { id: nextId(), axis: "y", pos: world.y }; state.guides.push(g); drag = { mode: "guide", guide: g }; return; }
+  if (mx < RULER || my < RULER) return;
   const gh = guideAt(mx, my);
-  if (gh) { drag = { mode: "guide", guide: gh, isNew: false }; return; }
+  if (gh) { drag = { mode: "guide", guide: gh }; return; }
+
+  if (state.mode === "stitch") {
+    // stitch view: click to choose which object to fine-tune (no editing)
+    const hit = hitTestObject(world);
+    state.selectedId = hit ? hit.id : null;
+    refreshProps(); refreshObjectList(); needsRender = true;
+    return;
+  }
 
   if (tool === "shape") {
-    const obj = makeObject(shapeStyle, [world, world], state.activeColor);
-    obj.name = SHAPES.find((s) => s.kind === shapeKind)?.label || "Shape";
-    obj.points = buildShape(shapeKind, { x: world.x, y: world.y, w: 0.1, h: 0.1 });
-    state.objects.push(obj);
-    state.selectedId = obj.id;
-    drag = { mode: "shape", obj, start: world, kind: shapeKind };
+    const obj = addShape(shapeKind, { x: world.x, y: world.y, w: 0.1, h: 0.1 });
+    drag = { mode: "draw-shape", obj, start: world };
+    $("shape-popover").classList.add("hidden");
     return;
   }
+  if (tool === "text") { addText(world); return; }
 
-  if (tool === "text") {
-    placeText(world);
-    return;
-  }
-
-  if (tool === "select") {
-    const sel = selectedObject();
-    if (sel) {
-      for (let i = 0; i < sel.points.length; i++) {
-        const sp = cam.toScreen(sel.points[i]);
-        if (dist(sp, { x: mx, y: my }) <= NODE_HIT_PX) {
-          drag = { mode: "node", obj: sel, index: i };
-          return;
-        }
+  // select tool — handles first, then objects
+  const sel = selectedObject();
+  if (sel && sel.visible) {
+    const H = selectionHandlesScreen(sel);
+    if (dist(H.rotate, { x: mx, y: my }) <= HANDLE_HIT + 2) {
+      const box = H._box;
+      drag = { mode: "rotate", obj: sel, center: { x: box.cx, y: box.cy }, startAngle: Math.atan2(world.y - box.cy, world.x - box.cx), startRot: sel.rotation || 0 };
+      return;
+    }
+    for (const k of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+      if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) {
+        const box = H._box;
+        const anchorW = boxHandlesWorld(box)[OPP[k]];
+        drag = { mode: "resize", obj: sel, handle: k, anchorW, rot: rad(box.rot), startW: box.w, startH: box.h };
+        return;
       }
     }
-    const hit = hitTestObject(world);
-    if (hit) {
-      state.selectedId = hit.id;
-      drag = { mode: "object", obj: hit, start: world, orig: hit.points.map((p) => ({ ...p })) };
-      refreshObjectProps(); refreshObjectList(); needsRender = true;
-    } else {
-      state.selectedId = null;
-      refreshObjectProps(); refreshObjectList(); needsRender = true;
-    }
+  }
+
+  const hit = hitTestObject(world);
+  if (hit) {
+    state.selectedId = hit.id;
+    drag = { mode: "move", obj: hit, start: world, orig: snapshot(hit) };
+    refreshProps(); refreshObjectList(); needsRender = true;
   } else {
-    startOrExtendDraft(world);
+    state.selectedId = null;
+    refreshProps(); refreshObjectList(); needsRender = true;
   }
 });
 
-// Find an existing guide line near screen point (mx,my), within tolerance.
-function guideAt(mx, my) {
-  const tol = 5;
-  for (const g of state.guides) {
-    if (g.axis === "x") {
-      if (my < RULER) continue;
-      if (Math.abs(cam.toScreen({ x: g.pos, y: 0 }).x - mx) <= tol) return g;
-    } else {
-      if (mx < RULER) continue;
-      if (Math.abs(cam.toScreen({ x: 0, y: g.pos }).y - my) <= tol) return g;
-    }
-  }
-  return null;
+function snapshot(obj) {
+  return { points: obj.points.map((p) => ({ ...p })), box: obj.box ? { ...obj.box } : null };
 }
 
 canvas.addEventListener("mousemove", (e) => {
   const world = mouseWorld(e);
   cursor = { sx: e.offsetX, sy: e.offsetY };
-  document.getElementById("hud-coords").textContent =
-    `${fmt(world.x, state.units)}, ${fmt(world.y, state.units)}`;
+  $("hud-coords").textContent = `${fmt(world.x, state.units)}, ${fmt(world.y, state.units)}`;
 
   if (!drag) {
     const gh = guideAt(e.offsetX, e.offsetY);
-    if (gh !== hoverGuide) { hoverGuide = gh; }
+    if (gh !== hoverGuide) hoverGuide = gh;
     canvas.style.cursor = gh ? (gh.axis === "x" ? "ew-resize" : "ns-resize")
-      : (tool === "select" ? "default" : "crosshair");
-    needsRender = true; // keep ruler cursor markers live
+      : hoverCursor(e.offsetX, e.offsetY);
+    needsRender = true;
     return;
   }
+
   if (drag.mode === "pan") {
     cam.panX = drag.panX + (e.clientX - drag.startX);
     cam.panY = drag.panY + (e.clientY - drag.startY);
   } else if (drag.mode === "guide") {
     drag.guide.pos = drag.guide.axis === "x" ? world.x : world.y;
-  } else if (drag.mode === "node") {
-    drag.obj.points[drag.index] = world;
-    markDirty();
-  } else if (drag.mode === "object") {
-    const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
-    drag.obj.points = drag.orig.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-    markDirty();
-  } else if (drag.mode === "shape") {
+  } else if (drag.mode === "draw-shape") {
     const s = drag.start;
-    const box = { x: Math.min(s.x, world.x), y: Math.min(s.y, world.y),
-      w: Math.abs(world.x - s.x) || 0.1, h: Math.abs(world.y - s.y) || 0.1 };
-    drag.obj.points = buildShape(drag.kind, box);
+    let box;
+    if (shiftDown) {
+      const r = Math.max(Math.abs(world.x - s.x), Math.abs(world.y - s.y)) || 0.1;
+      box = { x: s.x - r, y: s.y - r, w: r * 2, h: r * 2 };
+    } else {
+      box = { x: Math.min(s.x, world.x), y: Math.min(s.y, world.y), w: Math.abs(world.x - s.x) || 0.1, h: Math.abs(world.y - s.y) || 0.1 };
+    }
+    drag.obj.box = box; rebuildShape(drag.obj); markDirty();
+  } else if (drag.mode === "move") {
+    const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
+    const o = drag.obj;
+    o.points = drag.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+    if (drag.orig.box) o.box = { ...drag.orig.box, x: drag.orig.box.x + dx, y: drag.orig.box.y + dy };
+    markDirty();
+  } else if (drag.mode === "resize") {
+    doResize(drag, world);
+    markDirty();
+  } else if (drag.mode === "rotate") {
+    let deg = drag.startRot + (Math.atan2(world.y - drag.center.y, world.x - drag.center.x) - drag.startAngle) * 180 / Math.PI;
+    if (shiftDown) deg = Math.round(deg / 15) * 15;
+    drag.obj.rotation = deg;
+    if (drag.obj.type === "text") bakeText(drag.obj); else rebuildShape(drag.obj);
     markDirty();
   }
   needsRender = true;
 });
 
+function doResize(d, world) {
+  const o = d.obj;
+  const k = d.handle;
+  const sx = k.includes("e") ? 1 : k.includes("w") ? -1 : 0;
+  const sy = k.includes("s") ? 1 : k.includes("n") ? -1 : 0;
+  // pointer in local (un-rotated) frame relative to the fixed anchor
+  const local = rotVec({ x: world.x - d.anchorW.x, y: world.y - d.anchorW.y }, -d.rot);
+  const MIN = 1.0;
+
+  if (o.type === "text") {
+    // uniform scale by distance ratio from anchor
+    const startDiag = Math.hypot(d.startW || 1, d.startH || 1);
+    const ratio = Math.max(0.05, Math.hypot(local.x, local.y) / startDiag);
+    o.params.size = Math.max(2, (o._sizeAtDragStart ?? o.params.size) * ratio);
+    if (d._sizeBase == null) d._sizeBase = o.params.size; // not used; kept for clarity
+    bakeText(o);
+    // reposition so the anchor handle stays put
+    const lb = o._localBox;
+    const half = { x: (-sx) * lb.w / 2, y: (-sy) * lb.h / 2 }; // anchor offset from center
+    const center = { x: d.anchorW.x - rotVec(half, d.rot).x, y: d.anchorW.y - rotVec(half, d.rot).y };
+    o.points[0] = { x: center.x - (lb.minX + lb.w / 2), y: center.y - (lb.minY + lb.h / 2) };
+    return;
+  }
+
+  let w = sx !== 0 ? Math.max(MIN, Math.abs(local.x)) : d.startW;
+  let h = sy !== 0 ? Math.max(MIN, Math.abs(local.y)) : d.startH;
+  if (shiftDown && sx !== 0 && sy !== 0) {
+    const s = Math.max(w / d.startW, h / d.startH);
+    w = d.startW * s; h = d.startH * s;
+  }
+  const center = { x: d.anchorW.x + rotVec({ x: sx * w / 2, y: sy * h / 2 }, d.rot).x,
+                   y: d.anchorW.y + rotVec({ x: sx * w / 2, y: sy * h / 2 }, d.rot).y };
+  o.box = { x: center.x - w / 2, y: center.y - h / 2, w, h };
+  rebuildShape(o);
+}
+
 window.addEventListener("mouseup", () => {
   if (drag) {
-    const inRuler = cursor && (cursor.sx < RULER || cursor.sy < RULER);
-    if (drag.mode === "guide" && inRuler) {
-      // dropping a guide back onto a ruler removes it
-      state.guides = state.guides.filter((g) => g.id !== drag.guide.id);
-    } else if (drag.mode === "shape") {
-      const bb = bbox(drag.obj.points);
-      if (bb.w < 1 && bb.h < 1) {
+    if (drag.mode === "guide") {
+      const inRuler = cursor && (cursor.sx < RULER || cursor.sy < RULER);
+      if (inRuler) state.guides = state.guides.filter((g) => g.id !== drag.guide.id);
+    } else if (drag.mode === "draw-shape") {
+      const b = drag.obj.box;
+      if (b.w < 1.2 && b.h < 1.2) {
         state.objects = state.objects.filter((o) => o !== drag.obj);
         state.selectedId = null;
       }
-      ensureCompiled(); refreshObjectList(); refreshObjectProps();
-    } else if (drag.mode === "node" || drag.mode === "object") {
-      ensureCompiled();
+      setTool("select");
+      refreshObjectList(); refreshProps();
+    } else if (drag.mode === "resize" || drag.mode === "rotate" || drag.mode === "move") {
+      refreshProps();
     }
   }
   drag = null;
   needsRender = true;
 });
 
+// remember size at drag start for text resize
+canvas.addEventListener("mousedown", () => { const s = selectedObject(); if (s && s.type === "text") s._sizeAtDragStart = s.params.size; });
+
 canvas.addEventListener("dblclick", (e) => {
   const gh = guideAt(e.offsetX, e.offsetY);
   if (gh) { state.guides = state.guides.filter((g) => g.id !== gh.id); hoverGuide = null; needsRender = true; return; }
-  finalizeDraft();
+  if (state.mode !== "design") return;
+  const world = mouseWorld(e);
+  const hit = hitTestObject(world);
+  if (hit && hit.type === "text") { state.selectedId = hit.id; openTextEditor(hit); refreshProps(); refreshObjectList(); }
 });
 
 canvas.addEventListener("mouseleave", () => { cursor = null; needsRender = true; });
-
-canvas.addEventListener("contextmenu", (e) => {
-  e.preventDefault();
-  if (draft) finalizeDraft();
-});
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
   cam.zoomAt(e.offsetX, e.offsetY, factor);
-  document.getElementById("hud-zoom").textContent =
-    Math.round(cam.pxPerMm / baseScale() * 100) + "%";
+  $("hud-zoom").textContent = Math.round(cam.pxPerMm / baseScale() * 100) + "%";
   needsRender = true;
 }, { passive: false });
 
@@ -329,83 +409,96 @@ function baseScale() {
   return Math.min((r.width - 80) / hoop.w, (r.height - 80) / hoop.h);
 }
 
-function textBBox(obj) {
-  if (!obj._glyphs) return null;
-  const ax = obj.points[0] ? obj.points[0].x : 0;
-  const ay = obj.points[0] ? obj.points[0].y : 0;
-  const pts = obj._glyphs.flat().flat();
-  if (!pts.length) return null;
-  const bb = bbox(pts);
-  return { minX: bb.minX + ax, minY: bb.minY + ay, maxX: bb.maxX + ax, maxY: bb.maxY + ay };
+function hoverCursor(mx, my) {
+  if (state.mode !== "design") return "default";
+  const sel = selectedObject();
+  if (sel && sel.visible) {
+    const H = selectionHandlesScreen(sel);
+    if (dist(H.rotate, { x: mx, y: my }) <= HANDLE_HIT + 2) return "grab";
+    for (const k of ["nw", "ne", "se", "sw"]) if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) return "nwse-resize";
+    for (const k of ["n", "s"]) if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) return "ns-resize";
+    for (const k of ["e", "w"]) if (dist(H[k], { x: mx, y: my }) <= HANDLE_HIT) return "ew-resize";
+  }
+  return tool === "select" ? "default" : "crosshair";
+}
+
+function guideAt(mx, my) {
+  const tol = 5;
+  for (const g of state.guides) {
+    if (g.axis === "x") { if (my < RULER) continue; if (Math.abs(cam.toScreen({ x: g.pos, y: 0 }).x - mx) <= tol) return g; }
+    else { if (mx < RULER) continue; if (Math.abs(cam.toScreen({ x: 0, y: g.pos }).y - my) <= tol) return g; }
+  }
+  return null;
 }
 
 function hitTestObject(world) {
-  // nearest object whose path passes within tolerance of the point
-  const tolMm = NODE_HIT_PX / cam.pxPerMm;
-  let best = null, bestD = Infinity;
   for (let i = state.objects.length - 1; i >= 0; i--) {
     const obj = state.objects[i];
     if (!obj.visible) continue;
-    if (obj.type === "text") {
-      const bb = textBBox(obj);
-      if (bb && world.x >= bb.minX - tolMm && world.x <= bb.maxX + tolMm &&
-          world.y >= bb.minY - tolMm && world.y <= bb.maxY + tolMm) {
-        return obj;
-      }
-      continue;
-    }
-    for (let k = 0; k < obj.points.length; k++) {
-      const d = dist(world, obj.points[k]);
-      if (d < bestD) { bestD = d; best = obj; }
-      if (k > 0) {
-        const dd = pointSegDist(world, obj.points[k - 1], obj.points[k]);
-        if (dd < bestD) { bestD = dd; best = obj; }
-      }
-    }
+    const box = getObjBox(obj);
+    // transform world into object-local frame
+    const a = rad(box.rot);
+    const local = rotVec({ x: world.x - box.cx, y: world.y - box.cy }, -a);
+    if (Math.abs(local.x) <= box.w / 2 + 1 && Math.abs(local.y) <= box.h / 2 + 1) return obj;
   }
-  return bestD <= tolMm * 1.5 ? best : null;
+  return null;
 }
 
-function pointSegDist(p, a, b) {
-  const vx = b.x - a.x, vy = b.y - a.y;
-  const wx = p.x - a.x, wy = p.y - a.y;
-  const c1 = vx * wx + vy * wy;
-  if (c1 <= 0) return dist(p, a);
-  const c2 = vx * vx + vy * vy;
-  if (c2 <= c1) return dist(p, b);
-  const t = c1 / c2;
-  return dist(p, { x: a.x + t * vx, y: a.y + t * vy });
+// --------------------------------------------------------------- text editor
+let editing = null;
+function openTextEditor(obj) {
+  editing = obj;
+  const ed = $("text-editor");
+  const box = getObjBox(obj);
+  const sp = cam.toScreen(boxHandlesWorld(box).nw);
+  ed.style.left = sp.x + "px";
+  ed.style.top = sp.y + "px";
+  ed.style.fontFamily = cssFamily(obj.params.font);
+  ed.value = obj.params.text;
+  ed.classList.remove("hidden");
+  ed.focus(); ed.select();
 }
+function closeTextEditor(commit) {
+  if (!editing) return;
+  const ed = $("text-editor");
+  if (commit) { editing.params.text = ed.value || " "; editing.name = ed.value.slice(0, 18) || "Text"; bakeText(editing); markDirty(); }
+  ed.classList.add("hidden");
+  editing = null;
+  refreshObjectList(); refreshProps(); needsRender = true;
+}
+$("text-editor").addEventListener("input", (e) => { if (editing) { editing.params.text = e.target.value || " "; bakeText(editing); needsRender = true; } });
+$("text-editor").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); closeTextEditor(true); }
+  else if (e.key === "Escape") { e.preventDefault(); closeTextEditor(true); }
+  e.stopPropagation();
+});
+$("text-editor").addEventListener("blur", () => closeTextEditor(true));
 
 // --------------------------------------------------------------- keyboard
 window.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-  if (e.key === " ") { spaceDown = true; }
-  switch (e.key.toLowerCase()) {
-    case "v": setTool("select"); break;
-    case "r": setTool("running"); break;
-    case "s": setTool("satin"); break;
-    case "f": setTool("fill"); break;
-    case "h": setTool("shape"); break;
-    case "t": setTool("text"); break;
-    case "enter": finalizeDraft(); break;
-    case "escape": if (draft) { finalizeDraft(); } break;
-    case "delete": case "backspace":
-      if (state.selectedId) { deleteSelected(); e.preventDefault(); }
-      break;
+  if (e.key === "Shift") shiftDown = true;
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
+  if (e.key === " ") spaceDown = true;
+  if (state.mode === "design") {
+    switch (e.key.toLowerCase()) {
+      case "v": setTool("select"); break;
+      case "t": setTool("text"); break;
+      case "s": setTool("shape"); break;
+    }
   }
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedId && state.mode === "design") { deleteSelected(); e.preventDefault(); }
 });
+window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; if (e.key === "Shift") shiftDown = false; });
 
 function deleteSelected() {
   state.objects = state.objects.filter((o) => o.id !== state.selectedId);
   state.selectedId = null;
-  markDirty(); ensureCompiled();
-  refreshObjectList(); refreshObjectProps();
+  markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
 }
 
 // ----------------------------------------------------------------- UI build
 function buildThreadPicker() {
-  const sel = document.getElementById("thread-picker");
+  const sel = $("thread-picker");
   sel.innerHTML = "";
   for (const t of BROTHER_PALETTE) {
     const opt = document.createElement("option");
@@ -418,259 +511,312 @@ function buildThreadPicker() {
     state.activeColor = sel.value;
     updateActiveSwatch();
     const s = selectedObject();
-    if (s) { s.color = sel.value; markDirty(); ensureCompiled(); refreshObjectList(); }
+    if (s) { s.color = sel.value; markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }
   });
   updateActiveSwatch();
 }
-
-function updateActiveSwatch() {
-  document.getElementById("active-thread-swatch").style.background = state.activeColor;
-}
-
-function buildHoopPicker() {
-  const sel = document.getElementById("hoop-picker");
-  for (const h of HOOPS) {
-    const opt = document.createElement("option");
-    opt.value = h.id; opt.textContent = h.name;
-    sel.appendChild(opt);
-  }
-  sel.value = state.hoopId;
-  sel.addEventListener("change", () => {
-    state.hoopId = sel.value;
-    cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
-    updateHoopDims();
-    needsRender = true;
-  });
-  updateHoopDims();
-}
-
-function updateHoopDims() {
-  const h = getHoop(state.hoopId);
-  // Show the field in both units — Brother labels it "4 inch" but the true
-  // stitchable area is exactly 100 mm (≈ 3.94"), so be transparent.
-  document.getElementById("hoop-dims").textContent =
-    `${SE700.model} • field ${fmt(h.w, "in")} × ${fmt(h.h, "in")} (${h.w} × ${h.h} mm) • max ${SE700.maxSpeedSpm} spm`;
-}
+function updateActiveSwatch() { $("active-thread-swatch").style.background = state.activeColor; }
 
 function buildUnitToggle() {
-  const wrap = document.getElementById("unit-toggle");
-  const sync = () => wrap.querySelectorAll(".unit-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.unit === state.units));
-  wrap.querySelectorAll(".unit-btn").forEach((b) =>
-    b.addEventListener("click", () => {
-      state.units = b.dataset.unit;
-      sync(); updateHoopDims(); refreshStats(); refreshObjectProps(); needsRender = true;
-    }));
+  const wrap = $("unit-toggle");
+  const sync = () => wrap.querySelectorAll(".unit-btn").forEach((b) => b.classList.toggle("active", b.dataset.unit === state.units));
+  wrap.querySelectorAll(".unit-btn").forEach((b) => b.addEventListener("click", () => {
+    state.units = b.dataset.unit; sync(); updateHoopDims(); refreshStats(); refreshProps(); needsRender = true;
+  }));
   sync();
 }
-
-function buildShapePicker() {
-  const kind = document.getElementById("shape-kind");
-  for (const s of SHAPES) {
-    const opt = document.createElement("option");
-    opt.value = s.kind; opt.textContent = s.label;
-    kind.appendChild(opt);
-  }
-  kind.value = shapeKind;
-  kind.onchange = () => { shapeKind = kind.value; };
-  const style = document.getElementById("shape-style");
-  style.value = shapeStyle;
-  style.onchange = () => { shapeStyle = style.value; };
+function updateHoopDims() {
+  const h = getHoop(state.hoopId);
+  $("hoop-dims").textContent = `${SE700.model} • field ${fmt(h.w, "in")} × ${fmt(h.h, "in")} (${h.w}×${h.h} mm) • max ${SE700.maxSpeedSpm} spm`;
 }
 
+// ----------------------------------------------------------- shape popover
+function buildShapeGrid() {
+  const grid = $("shape-grid");
+  grid.innerHTML = "";
+  for (const s of SHAPES) {
+    if (s.kind === "line") continue; // lines aren't fillable objects in this phase
+    const cell = document.createElement("button");
+    cell.className = "shape-cell" + (s.kind === shapeKind ? " active" : "");
+    cell.title = s.label;
+    cell.innerHTML = shapeSVG(s.kind);
+    cell.onclick = () => {
+      shapeKind = s.kind;
+      tool = "shape";
+      document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === "shape"));
+      $("hud-hint").textContent = `Drag on the canvas to place your ${s.label.toLowerCase()}. Hold Shift for an even shape.`;
+      $("shape-popover").classList.add("hidden"); // free the whole canvas to draw on
+    };
+    grid.appendChild(cell);
+  }
+}
+function openShapePopover() { buildShapeGrid(); $("shape-popover").classList.remove("hidden"); }
+
+function shapeSVG(kind) {
+  const pts = buildShape(kind, { x: 4, y: 4, w: 40, h: 40 });
+  const d = pts.map((p, i) => (i ? "L" : "M") + p.x.toFixed(1) + " " + p.y.toFixed(1)).join(" ") + " Z";
+  return `<svg viewBox="0 0 48 48"><path d="${d}"/></svg>`;
+}
+
+// ----------------------------------------------------------- objects list
 function refreshObjectList() {
-  const ul = document.getElementById("object-list");
+  const ul = $("object-list");
   ul.innerHTML = "";
-  document.getElementById("object-count").textContent = `(${state.objects.length})`;
-  state.objects.forEach((obj) => {
+  $("object-count").textContent = `(${state.objects.length})`;
+  if (!state.objects.length) { ul.innerHTML = `<li class="empty-objects">No objects yet.</li>`; return; }
+  // top of list = drawn last; show in reverse so newest is on top
+  state.objects.slice().reverse().forEach((obj) => {
     const li = document.createElement("li");
     li.className = "object-item" + (obj.id === state.selectedId ? " selected" : "");
-    const sw = document.createElement("span");
-    sw.className = "obj-sw"; sw.style.background = obj.color;
-    const label = document.createElement("span");
-    label.className = "obj-label"; label.textContent = obj.name;
+    const icon = document.createElement("span");
+    icon.className = "obj-icon"; icon.style.background = obj.color;
+    icon.textContent = obj.type === "text" ? "T" : "◆";
+    const main = document.createElement("div"); main.className = "obj-main";
+    const label = document.createElement("span"); label.className = "obj-label";
+    label.textContent = obj.type === "text" ? (obj.params.text || "Text") : obj.name;
+    const sub = document.createElement("span"); sub.className = "obj-sub";
+    sub.textContent = obj.type === "text" ? `Text · ${obj.params.font}` : `Shape · ${obj.name}`;
+    main.append(label, sub);
     const vis = document.createElement("button");
-    vis.className = "obj-vis"; vis.textContent = obj.visible ? "👁" : "—";
-    vis.title = "Toggle visibility";
-    vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); ensureCompiled(); refreshObjectList(); };
-    li.append(sw, label, vis);
-    li.onclick = () => { state.selectedId = obj.id; refreshObjectProps(); refreshObjectList(); needsRender = true; };
+    vis.className = "obj-btn"; vis.textContent = obj.visible ? "👁" : "🚫"; vis.title = "Show / hide";
+    vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); refreshObjectList(); needsRender = true; };
+    const del = document.createElement("button");
+    del.className = "obj-btn danger"; del.textContent = "🗑"; del.title = "Delete";
+    del.onclick = (e) => { e.stopPropagation(); state.selectedId = obj.id; deleteSelected(); };
+    li.append(icon, main, vis, del);
+    li.onclick = () => { state.selectedId = obj.id; refreshProps(); refreshObjectList(); needsRender = true; };
     ul.appendChild(li);
   });
 }
 
-function refreshObjectProps() {
-  const host = document.getElementById("object-props");
+// ----------------------------------------------------------- properties
+function refreshProps() {
+  if (state.mode === "stitch") { refreshStitchSettings(); return; }
+  const host = $("object-props");
+  $("props-title").textContent = "Properties";
   const obj = selectedObject();
-  if (!obj) { host.className = "props-empty"; host.textContent = "No object selected."; return; }
-  host.className = "";
-  host.innerHTML = "";
+  if (!obj) { host.className = "props-empty"; host.textContent = "Select or add an object to edit it."; return; }
+  host.className = ""; host.innerHTML = "";
 
-  const row = (label, input) => {
-    const d = document.createElement("div"); d.className = "prop-row";
-    const l = document.createElement("label"); l.textContent = label;
-    d.append(l, input); host.appendChild(d);
-  };
-  const num = (val, step, min, onInput) => {
-    const i = document.createElement("input");
-    i.type = "number"; i.value = val; i.step = step; if (min != null) i.min = min;
-    i.oninput = () => { onInput(parseFloat(i.value)); markDirty(); ensureCompiled(); };
-    return i;
-  };
-  // number input that delegates entirely to its callback (no auto recompile)
-  const numCb = (val, step, min, onInput) => {
-    const i = document.createElement("input");
-    i.type = "number"; i.value = val; i.step = step; if (min != null) i.min = min;
-    i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) onInput(v); };
-    return i;
-  };
-  const chk = (checked, onChange) => {
-    const i = document.createElement("input");
-    i.type = "checkbox"; i.checked = !!checked;
-    i.onchange = () => { onChange(i.checked); markDirty(); ensureCompiled(); };
-    return i;
-  };
-
-  const nameI = document.createElement("input");
-  nameI.type = "text"; nameI.value = obj.name;
-  nameI.oninput = () => { obj.name = nameI.value; refreshObjectList(); };
-  row("Name", nameI);
-
-  const typeLabel = document.createElement("span");
-  typeLabel.className = "type-badge"; typeLabel.textContent = obj.type;
-  row("Type", typeLabel);
-
-  if (obj.type === "running") {
-    row("Stitch length (mm)", num(obj.params.stitchLength, 0.1, 0.5, (v) => obj.params.stitchLength = v));
-    row("Repeats", num(obj.params.repeats, 1, 1, (v) => obj.params.repeats = Math.max(1, Math.round(v))));
-  } else if (obj.type === "satin") {
-    row("Width (mm)", num(obj.params.width, 0.5, 0.5, (v) => obj.params.width = v));
-    row("Density (mm)", num(obj.params.density, 0.05, 0.2, (v) => obj.params.density = v));
-    row("Pull comp. (mm)", num(obj.params.pull, 0.05, 0, (v) => obj.params.pull = v));
-    row("Underlay", chk(obj.params.underlay, (v) => obj.params.underlay = v));
-  } else if (obj.type === "fill") {
-    row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
-    row("Stitch length (mm)", num(obj.params.stitchLength, 0.1, 1, (v) => obj.params.stitchLength = v));
-    row("Angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
-    row("Underlay", chk(obj.params.underlay, (v) => obj.params.underlay = v));
-  } else if (obj.type === "text") {
-    const textI = document.createElement("input");
-    textI.type = "text"; textI.value = obj.params.text;
-    textI.oninput = () => { obj.params.text = textI.value; buildTextGlyphs(obj); };
-    row("Text", textI);
-
-    const fontSel = document.createElement("select");
-    fontSel.className = "select";
-    for (const f of FONTS) {
-      const opt = document.createElement("option");
-      opt.value = f.name; opt.textContent = `${f.name} — ${f.category}`;
-      fontSel.appendChild(opt);
-    }
-    fontSel.value = obj.params.font;
-    fontSel.onchange = () => { obj.params.font = fontSel.value; buildTextGlyphs(obj); };
-    row("Font", fontSel);
-
-    const rebuild = (v, set) => { set(v); buildTextGlyphs(obj); };
-    const u = state.units;
-    const heightStep = u === "in" ? 0.05 : 1;
-    row(`Height (${u})`, numCb(toUnit(obj.params.size, u), heightStep, 0.05,
-      (v) => rebuild(v, () => obj.params.size = fromUnit(v, u))));
-    row(`Letter spacing (${u})`, numCb(toUnit(obj.params.letterSpacing, u), u === "in" ? 0.02 : 0.2, null,
-      (v) => rebuild(v, () => obj.params.letterSpacing = fromUnit(v, u))));
-    row("Row spacing (mm)", num(obj.params.spacing, 0.05, 0.25, (v) => obj.params.spacing = v));
-    row("Fill angle (°)", num(obj.params.angle, 5, -180, (v) => obj.params.angle = v));
-
-    const outI = document.createElement("input");
-    outI.type = "checkbox"; outI.checked = !!obj.params.outline;
-    outI.onchange = () => { obj.params.outline = outI.checked; markDirty(); ensureCompiled(); };
-    row("Outline pass", outI);
-  }
+  if (obj.type === "text") buildTextProps(host, obj);
+  else buildShapeProps(host, obj);
 
   const del = document.createElement("button");
   del.className = "btn btn-danger"; del.textContent = "Delete object";
+  del.style.width = "100%"; del.style.marginTop = "6px";
   del.onclick = deleteSelected;
   host.appendChild(del);
 }
 
-function updateSimColor(s) {
-  const host = document.getElementById("sim-color");
-  if (!compiled || s.index === 0) { host.textContent = ""; host.style.background = "transparent"; return; }
-  const entry = compiled.plan[Math.min(s.index - 1, compiled.plan.length - 1)];
-  const c = compiled.colors[entry.color];
-  if (c) {
-    host.style.background = c.color;
-    host.textContent = `#${c.brother.i} ${c.brother.name}`;
-  }
+function rowFull(host, labelText, el) {
+  const d = document.createElement("div"); d.className = "prop-full";
+  const l = document.createElement("label"); l.textContent = labelText;
+  d.append(l, el); host.appendChild(d);
+}
+function row(host, labelText, el) {
+  const d = document.createElement("div"); d.className = "prop-row";
+  const l = document.createElement("label"); l.textContent = labelText;
+  d.append(l, el); host.appendChild(d);
+}
+function numInput(val, step, min, onChange) {
+  const i = document.createElement("input");
+  i.type = "number"; i.value = round(val); i.step = step; if (min != null) i.min = min;
+  i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) onChange(v); };
+  return i;
+}
+const round = (v) => Math.round(v * 1000) / 1000;
+
+function buildTextProps(host, obj) {
+  $("props-title").textContent = "Text";
+  const t = document.createElement("input");
+  t.type = "text"; t.value = obj.params.text;
+  t.oninput = () => { obj.params.text = t.value || " "; obj.name = t.value.slice(0, 18); bakeText(obj); markDirty(); refreshObjectList(); needsRender = true; };
+  rowFull(host, "Text", t);
+
+  const fb = document.createElement("button");
+  fb.className = "font-btn";
+  fb.innerHTML = `<span class="fname" style="font-family:${cssFamily(obj.params.font)}">${obj.params.font}</span><span class="chev">▾ Library</span>`;
+  fb.onclick = () => openFontGallery(obj);
+  rowFull(host, "Font", fb);
+
+  const u = state.units;
+  row(host, `Size (${u})`, numInput(toUnit(obj.params.size, u), u === "in" ? 0.05 : 1, 0.05, (v) => { obj.params.size = fromUnit(v, u); bakeText(obj); markDirty(); needsRender = true; }));
+
+  // B / I / U
+  const styleWrap = document.createElement("div"); styleWrap.className = "style-btns";
+  const mk = (label, key, cls) => {
+    const b = document.createElement("button"); b.className = "style-btn" + (obj.params[key] ? " active" : "");
+    b.innerHTML = cls ? `<span class="${cls}">${label}</span>` : `<b>${label}</b>`;
+    b.onclick = () => { obj.params[key] = !obj.params[key]; b.classList.toggle("active"); bakeText(obj); markDirty(); needsRender = true; };
+    return b;
+  };
+  styleWrap.append(mk("B", "bold"), mk("I", "italic", "i"), mk("U", "underline", "u"));
+  rowFull(host, "Style", styleWrap);
+
+  const curve = document.createElement("input");
+  curve.type = "range"; curve.min = -100; curve.max = 100; curve.value = obj.params.curve || 0;
+  curve.oninput = () => { obj.params.curve = parseInt(curve.value, 10); bakeText(obj); markDirty(); needsRender = true; };
+  row(host, "Arc / circle", curve);
+
+  row(host, "Rotation (°)", numInput(obj.rotation || 0, 5, null, (v) => { obj.rotation = v; bakeText(obj); markDirty(); needsRender = true; }));
+
+  buildColorRow(host, obj);
 }
 
-// ----------------------------------------------------------------- toolbar
-document.querySelectorAll(".tool").forEach((b) =>
-  b.addEventListener("click", () => setTool(b.dataset.tool)));
+function buildShapeProps(host, obj) {
+  $("props-title").textContent = "Shape";
+  const sel = document.createElement("select"); sel.className = "select";
+  for (const s of SHAPES) { if (s.kind === "line") continue; const o = document.createElement("option"); o.value = s.kind; o.textContent = s.label; sel.appendChild(o); }
+  sel.value = obj.kind || "rect";
+  sel.onchange = () => { obj.kind = sel.value; obj.name = SHAPES.find((s) => s.kind === sel.value)?.label || "Shape"; rebuildShape(obj); markDirty(); refreshObjectList(); needsRender = true; };
+  row(host, "Shape", sel);
 
-[["chk-show-image", "showImage"], ["chk-show-stitches", "showStitches"],
- ["chk-show-jumps", "showJumps"], ["chk-show-points", "showPoints"],
- ["chk-show-grid", "showGrid"]].forEach(([id, key]) => {
-  document.getElementById(id).addEventListener("change", (e) => {
-    view[key] = e.target.checked; needsRender = true;
-  });
+  const u = state.units;
+  if (obj.box) {
+    row(host, `Width (${u})`, numInput(toUnit(obj.box.w, u), u === "in" ? 0.05 : 1, 0.1, (v) => { obj.box.w = Math.max(1, fromUnit(v, u)); rebuildShape(obj); markDirty(); needsRender = true; }));
+    row(host, `Height (${u})`, numInput(toUnit(obj.box.h, u), u === "in" ? 0.05 : 1, 0.1, (v) => { obj.box.h = Math.max(1, fromUnit(v, u)); rebuildShape(obj); markDirty(); needsRender = true; }));
+  }
+  row(host, "Rotation (°)", numInput(obj.rotation || 0, 5, null, (v) => { obj.rotation = v; rebuildShape(obj); markDirty(); needsRender = true; }));
+
+  const fillSel = document.createElement("select"); fillSel.className = "select";
+  fillSel.innerHTML = `<option value="fill">Filled</option><option value="outline">Outline only</option>`;
+  fillSel.value = obj.params.fillMode || "fill";
+  fillSel.onchange = () => { obj.params.fillMode = fillSel.value; markDirty(); needsRender = true; };
+  row(host, "Style", fillSel);
+
+  buildColorRow(host, obj);
+}
+
+function buildColorRow(host, obj) {
+  const wrap = document.createElement("div"); wrap.className = "color-row";
+  const dot = document.createElement("span"); dot.className = "color-dot"; dot.style.background = obj.color;
+  const sel = document.createElement("select"); sel.className = "select";
+  for (const t of BROTHER_PALETTE) { const o = document.createElement("option"); o.value = rgbToHex(t.rgb); o.textContent = `#${t.i} ${t.name}`; sel.appendChild(o); }
+  sel.value = obj.color;
+  sel.onchange = () => { obj.color = sel.value; dot.style.background = sel.value; markDirty(); refreshObjectList(); needsRender = true; };
+  wrap.append(dot, sel);
+  rowFull(host, "Thread color", wrap);
+}
+
+// ----------------------------------------------------- stitch settings panel
+function refreshStitchSettings() {
+  const host = $("stitch-settings");
+  const obj = selectedObject();
+  if (!obj) { host.className = "props-empty"; host.textContent = "Select an object to fine-tune its fill."; return; }
+  host.className = ""; host.innerHTML = "";
+  const p = obj.params;
+  const recompileLive = () => { markDirty(); recompile(); needsRender = true; };
+
+  row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { p.spacing = v; recompileLive(); }));
+  row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { p.stitchLength = v; recompileLive(); }));
+  row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { p.angle = v; recompileLive(); }));
+
+  const under = document.createElement("input"); under.type = "checkbox"; under.checked = p.underlay !== false;
+  under.onchange = () => { p.underlay = under.checked; recompileLive(); };
+  row(host, "Underlay", under);
+
+  const out = document.createElement("input"); out.type = "checkbox"; out.checked = !!p.outline;
+  out.onchange = () => { p.outline = out.checked; recompileLive(); };
+  row(host, "Outline pass", out);
+}
+
+// ----------------------------------------------------------- font gallery
+let fontTarget = null;
+function buildFontGrid() {
+  const grid = $("font-grid");
+  const sample = $("font-sample").value || (fontTarget && fontTarget.params.text) || "Embroidery";
+  grid.innerHTML = "";
+  for (const f of FONTS) {
+    const card = document.createElement("div");
+    card.className = "font-card" + (fontTarget && fontTarget.params.font === f.name ? " active" : "");
+    const s = document.createElement("div"); s.className = "font-sample";
+    s.style.fontFamily = cssFamily(f.name); s.textContent = sample;
+    const meta = document.createElement("div"); meta.className = "font-meta";
+    meta.innerHTML = `<div class="nm">${f.name}</div><div class="cat">${f.category}</div>`;
+    card.append(s, meta);
+    card.onclick = () => {
+      if (fontTarget) { fontTarget.params.font = f.name; bakeText(fontTarget, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }); }
+      closeFontGallery();
+    };
+    grid.appendChild(card);
+  }
+}
+function openFontGallery(obj) {
+  fontTarget = obj;
+  // ensure all faces are fetched so glyph baking is instant after pick
+  FONTS.forEach((f) => loadFont(f.name).catch(() => {}));
+  $("font-sample").value = obj.params.text && obj.params.text.trim() ? obj.params.text : "";
+  $("font-modal").classList.remove("hidden");
+  buildFontGrid();
+}
+function closeFontGallery() { $("font-modal").classList.add("hidden"); }
+$("font-close").onclick = closeFontGallery;
+$("font-sample").oninput = buildFontGrid;
+$("font-modal").addEventListener("click", (e) => { if (e.target.id === "font-modal") closeFontGallery(); });
+
+// ----------------------------------------------------------------- toolbar
+document.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
+[["chk-show-image", "showImage"], ["chk-show-stitches", "showStitches"], ["chk-show-jumps", "showJumps"],
+ ["chk-show-points", "showPoints"], ["chk-show-grid", "showGrid"]].forEach(([id, key]) => {
+  const el = $(id); if (el) el.addEventListener("change", (e) => { view[key] = e.target.checked; needsRender = true; });
 });
 
 // ----------------------------------------------------------------- sim bar
-document.getElementById("sim-play").onclick = () => sim.toggle();
-document.getElementById("sim-start").onclick = () => sim.toStart();
-document.getElementById("sim-end").onclick = () => sim.toEnd();
-document.getElementById("sim-scrub").oninput = (e) => sim.seek(parseInt(e.target.value, 10));
-document.getElementById("sim-speed").oninput = (e) => { sim.speed = parseInt(e.target.value, 10); };
+$("sim-play").onclick = () => sim.toggle();
+$("sim-start").onclick = () => sim.toStart();
+$("sim-end").onclick = () => sim.toEnd();
+$("sim-scrub").oninput = (e) => sim.seek(parseInt(e.target.value, 10));
+$("sim-speed").oninput = (e) => { sim.speed = parseInt(e.target.value, 10); };
 
 // ----------------------------------------------------------------- top bar
-document.getElementById("btn-new").onclick = () => {
+$("btn-render").onclick = () => renderStitches();
+$("btn-back").onclick = () => setMode("design");
+$("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" : "light"; document.body.dataset.theme = state.theme; needsRender = true; };
+
+$("btn-new").onclick = () => {
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
   state.objects = []; state.selectedId = null; state.image = null;
-  markDirty(); ensureCompiled(); refreshObjectList(); refreshObjectProps();
+  markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
   toast("New design");
 };
-
-document.getElementById("btn-import-image").onclick = () =>
-  document.getElementById("file-image").click();
-document.getElementById("file-image").onchange = (e) => {
+$("btn-import-image").onclick = () => $("file-image").click();
+$("file-image").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   const img = new Image();
   img.onload = () => {
     state.image = img;
-    // place so the image roughly fits the hoop width
     const hoop = getHoop(state.hoopId);
     const sc = (hoop.w * 0.8) / img.width;
     state.imageTransform = { x: hoop.w * 0.1, y: hoop.h * 0.1, scale: sc, opacity: 0.5 };
-    needsRender = true; toast("Image imported — trace over it with the tools");
+    needsRender = true; toast("Image imported — trace over it with shapes & text");
   };
   img.src = URL.createObjectURL(f);
+  e.target.value = "";
 };
-
-document.getElementById("btn-save-json").onclick = () => {
-  download(serialize(), "design.gsew", "application/json");
-  toast("Project saved");
-};
-document.getElementById("btn-load-json").onclick = () =>
-  document.getElementById("file-json").click();
-document.getElementById("file-json").onchange = (e) => {
+$("btn-save-json").onclick = () => { download(serialize(), "design.gsew", "application/json"); toast("Project saved"); };
+$("btn-load-json").onclick = () => $("file-json").click();
+$("file-json").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = () => {
     try {
       deserialize(reader.result);
-      buildHoopPicker(); ensureCompiled(); refreshObjectList(); refreshObjectProps();
+      document.body.dataset.theme = state.theme;
+      state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
+      setMode("design");
+      refreshObjectList(); refreshProps(); updateEmptyHint();
       cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
       toast("Project loaded");
     } catch (err) { toast("Could not load file: " + err.message, true); }
   };
   reader.readAsText(f);
+  e.target.value = "";
 };
 
 // ----------------------------------------------------------------- preview
 let previewProduct = "tshirt";
 function buildPreviewProducts() {
-  const host = document.getElementById("preview-products");
-  host.innerHTML = "";
+  const host = $("preview-products"); host.innerHTML = "";
   for (const p of PRODUCTS) {
     const b = document.createElement("button");
     b.className = "pp-btn" + (p.id === previewProduct ? " active" : "");
@@ -678,50 +824,42 @@ function buildPreviewProducts() {
     b.onclick = () => { previewProduct = p.id; buildPreviewProducts(); drawPreview(); };
     host.appendChild(b);
   }
-  document.getElementById("preview-custom").classList.toggle("hidden", getProduct(previewProduct).custom !== true);
+  $("preview-custom").classList.toggle("hidden", getProduct(previewProduct).custom !== true);
 }
-
 function drawPreview() {
   ensureCompiled();
-  const canvas = document.getElementById("preview-canvas");
-  const r = canvas.getBoundingClientRect();
-  canvas.width = Math.round(r.width * devicePixelRatio);
-  canvas.height = Math.round(r.height * devicePixelRatio);
-  const ctx = canvas.getContext("2d");
+  const pc = $("preview-canvas");
+  const r = pc.getBoundingClientRect();
+  pc.width = Math.round(r.width * devicePixelRatio);
+  pc.height = Math.round(r.height * devicePixelRatio);
+  const pctx = pc.getContext("2d");
   const product = getProduct(previewProduct);
   const cu = state.units;
-  const customW = fromUnit(parseFloat(document.getElementById("custom-w").value) || 6, cu);
-  const customH = fromUnit(parseFloat(document.getElementById("custom-h").value) || 4, cu);
-  renderPreview(ctx, compiled, product, { customW, customH });
-
+  const customW = fromUnit(parseFloat($("custom-w").value) || 6, cu);
+  const customH = fromUnit(parseFloat($("custom-h").value) || 4, cu);
+  renderPreview(pctx, compiled, product, { customW, customH });
   const st = computeStats(compiled);
-  document.getElementById("preview-scale").textContent =
-    st.width > 0 ? `— design ${fmt(st.width, cu)} × ${fmt(st.height, cu)}` : "";
-  document.getElementById("custom-unit").textContent = cu;
+  $("preview-scale").textContent = st.width > 0 ? `— design ${fmt(st.width, cu)} × ${fmt(st.height, cu)}` : "";
+  $("custom-unit").textContent = cu;
 }
-
 function openPreview() {
   ensureCompiled();
   const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing to preview — draw something first.", true); return; }
-  document.getElementById("preview-modal").classList.remove("hidden");
+  if (st.stitches === 0) { toast("Nothing to preview — render first.", true); return; }
+  $("preview-modal").classList.remove("hidden");
   buildPreviewProducts();
-  requestAnimationFrame(drawPreview); // after layout
+  requestAnimationFrame(drawPreview);
 }
+$("btn-preview").onclick = openPreview;
+$("preview-close").onclick = () => $("preview-modal").classList.add("hidden");
+$("preview-modal").addEventListener("click", (e) => { if (e.target.id === "preview-modal") e.currentTarget.classList.add("hidden"); });
+$("custom-w").oninput = drawPreview;
+$("custom-h").oninput = drawPreview;
 
-document.getElementById("btn-preview").onclick = openPreview;
-document.getElementById("preview-close").onclick = () =>
-  document.getElementById("preview-modal").classList.add("hidden");
-document.getElementById("preview-modal").addEventListener("click", (e) => {
-  if (e.target.id === "preview-modal") e.currentTarget.classList.add("hidden");
-});
-document.getElementById("custom-w").oninput = drawPreview;
-document.getElementById("custom-h").oninput = drawPreview;
-
-document.getElementById("btn-export-pes").onclick = () => {
+$("btn-export-pes").onclick = () => {
   ensureCompiled();
   const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing to export — draw something first.", true); return; }
+  if (st.stitches === 0) { toast("Nothing to export — render first.", true); return; }
   const hoop = getHoop(state.hoopId);
   if (st.width > hoop.w + 0.5 || st.height > hoop.h + 0.5) {
     if (!confirm(`Design (${st.width.toFixed(0)}×${st.height.toFixed(0)} mm) exceeds the ${hoop.name} field. Export anyway?`)) return;
@@ -733,29 +871,33 @@ document.getElementById("btn-export-pes").onclick = () => {
 
 // ----------------------------------------------------------------- helpers
 function download(data, filename, mime) {
-  const blob = data instanceof Uint8Array
-    ? new Blob([data], { type: mime })
-    : new Blob([data], { type: mime });
+  const blob = new Blob([data], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 let toastTimer = null;
 function toast(msg, isError) {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.classList.remove("hidden");
-  el.classList.toggle("error", !!isError);
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.add("hidden"), 3200);
+  const el = $("toast"); el.textContent = msg;
+  el.classList.remove("hidden"); el.classList.toggle("error", !!isError);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.add("hidden"), 3200);
+}
+function updateEmptyHint() {
+  $("empty-hint").style.display = (state.mode === "design" && state.objects.length === 0) ? "block" : "none";
+}
+function updateSimColor(s) {
+  const host = $("sim-color");
+  if (!compiled || s.index === 0) { host.textContent = ""; host.style.background = "transparent"; return; }
+  const entry = compiled.plan[Math.min(s.index - 1, compiled.plan.length - 1)];
+  const c = compiled.colors[entry.color];
+  if (c) { host.style.background = c.color; host.textContent = `#${c.brother.i} ${c.brother.name}`; }
 }
 
 // ----------------------------------------------------------------- main loop
 function frame() {
   if (needsRender) {
-    ensureCompiled();
+    if (state.mode === "stitch") ensureCompiled();
     render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, unit: UNITS[state.units] });
     needsRender = false;
   }
@@ -764,54 +906,44 @@ function frame() {
 
 // ----------------------------------------------------------------- boot
 function boot() {
+  document.body.dataset.theme = state.theme;
+  document.body.dataset.mode = state.mode;
   buildThreadPicker();
-  buildHoopPicker();
   buildUnitToggle();
-  buildShapePicker();
+  buildShapeGrid();
+  updateHoopDims();
   setTool("select");
   resize();
-  recompile();
-  refreshObjectList();
-  refreshObjectProps();
   seedDemo();
+  refreshObjectList();
+  refreshProps();
+  updateEmptyHint();
   frame();
 
-  // Lightweight debug hook used by the e2e test harness.
   window.__gs = {
-    state,
-    sim,
-    setTool,
+    state, sim, setTool, setMode, renderStitches,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
+    addText, addShape, bakeText,
+    // test helper: screen-space handle positions for the given object
+    handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; state.selectedId = o.id; return selectionHandlesScreen(o); },
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
     exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
   };
 }
 
-// A starter design so the canvas isn't empty on first load — also showcases
-// shapes, fills and lettering within the SE700's 100×100 mm field.
+// A friendly starter so the canvas isn't empty.
 function seedDemo() {
   if (state.objects.length) return;
   const cx = getHoop(state.hoopId).w / 2;
-
-  // gold star
-  const star = makeObject("fill", buildShape("star5", { x: cx - 22, y: 16, w: 44, h: 44 }), rgbToHex([254, 186, 53]));
-  star.name = "Star";
-  star.params.angle = 30;
-  const starOutline = makeObject("running", buildShape("star5", { x: cx - 22, y: 16, w: 44, h: 44 }), rgbToHex([209, 92, 0]));
-  starOutline.name = "Star outline";
-
-  // lettering
-  const text = makeObject("text", [{ x: cx - 26, y: 82 }], rgbToHex([14, 31, 124]));
-  text.name = "SE700";
-  text.params.text = "SE700";
-  text.params.font = "Anton";
-  text.params.size = 15;
-
-  state.objects.push(star, starOutline, text);
-  markDirty(); recompile(); refreshObjectList();
-  buildTextGlyphs(text);
+  const heart = makeObject("fill", [], rgbToHex([209, 41, 71]));
+  heart.kind = "heart"; heart.box = { x: cx - 18, y: 10, w: 36, h: 32 }; heart.name = "Heart";
+  rebuildShape(heart);
+  const text = makeObject("text", [{ x: cx - 30, y: 78 }], rgbToHex([14, 31, 124]));
+  text.name = "GoodSew"; text.params.text = "GoodSew"; text.params.font = "Anton"; text.params.size = 16;
+  state.objects.push(heart, text);
+  state.selectedId = text.id;
+  bakeText(text, () => { markDirty(); refreshObjectList(); needsRender = true; });
+  markDirty();
 }
-
-window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; });
 
 boot();

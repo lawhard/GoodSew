@@ -1,8 +1,17 @@
 // Central application state + design data model.
 //
-// A Design is a list of vector "objects". Each object owns its geometry (in mm,
-// design space) and stitch parameters, plus a thread color. Objects are compiled
-// on demand into a flat stitch plan (see compiler.js).
+// A Design is a list of vector "objects". Each object owns a simple editing
+// transform (center, size, rotation) plus type-specific content, and a thread
+// color. The app keeps two phases:
+//   - "design"  : objects are shown as solid vector art for easy layout/editing.
+//   - "stitch"  : objects are compiled into a flat stitch plan (see compiler.js)
+//                 and simulated/exported.
+//
+// For compatibility with the stitch pipeline, every object also exposes BAKED
+// geometry that the compiler reads directly:
+//   - shapes (type "fill"): obj.points  = final (rotated) polygon, in mm
+//   - text   (type "text"): obj.points  = [anchor], obj._glyphs = baked contours
+// The bake step lives in app.js (rebuildShape / buildTextGlyphs).
 
 import { nearestBrother } from "./threads.js";
 
@@ -14,14 +23,15 @@ export function defaultParams(type) {
     case "running":
       return { stitchLength: 2.5, repeats: 1 };
     case "satin":
-      // density = mm between zig-zag points; pull = mm pull-compensation per side
       return { width: 4, density: 0.4, pull: 0.2, underlay: true };
     case "fill":
-      return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true };
+      // outline = add a tidy running edge pass on top of the fill
+      return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true, outline: false };
     case "text":
       return {
         text: "Text", font: "Anton", size: 16, letterSpacing: 0,
         spacing: 0.4, stitchLength: 2.5, angle: 0,
+        bold: false, italic: false, underline: false, curve: 0,
         outline: false, outlineLen: 2.0,
       };
     default:
@@ -29,14 +39,15 @@ export function defaultParams(type) {
   }
 }
 
-// Create a new embroidery object.
+// Create a new embroidery object. `type` is the COMPILE type ("fill" | "text").
 export function makeObject(type, points, color = "#1f3f7c") {
   return {
     id: nextId(),
-    type,                  // 'running' | 'satin' | 'fill'
+    type,
     name: `${type[0].toUpperCase()}${type.slice(1)} ${_id}`,
-    color,                 // hex; mapped to nearest Brother index on export
-    points: points || [],  // array of {x,y} mm
+    color,
+    points: points || [],   // baked geometry (see header)
+    rotation: 0,            // degrees, clockwise
     params: defaultParams(type),
     visible: true,
   };
@@ -45,16 +56,15 @@ export function makeObject(type, points, color = "#1f3f7c") {
 export const state = {
   hoopId: "se700",
   units: "in",           // 'in' (default) | 'mm' — display only; model is mm
+  theme: "light",        // 'light' (default) | 'dark'
+  mode: "design",        // 'design' (layout) | 'stitch' (rendered pattern)
   objects: [],
-  guides: [],            // [{ id, axis:'x'|'y', pos }]  x=vertical line, y=horizontal
+  guides: [],            // [{ id, axis:'x'|'y', pos }]
   selectedId: null,
-  activeColor: "#1f3f7c",
-  // background tracing image
-  image: null,           // HTMLImageElement
-  imageTransform: { x: 0, y: 0, scale: 1, opacity: 0.5 }, // placement in mm
-  // view
-  view: { panX: 0, panY: 0, zoom: 1 }, // zoom px-per-mm multiplier baseline set on resize
-  // compiled plan cache
+  activeColor: "#0e1f7c",
+  image: null,           // HTMLImageElement (tracing background)
+  imageTransform: { x: 0, y: 0, scale: 1, opacity: 0.5 },
+  view: { panX: 0, panY: 0, zoom: 1 },
   plan: null,
   planDirty: true,
 };
@@ -73,7 +83,6 @@ export function colorBlocks() {
   const blocks = [];
   for (const obj of state.objects) {
     if (!obj.visible) continue;
-    // text validity depends on its cached glyphs, not its anchor point count
     if (obj.type === "text") {
       if (!obj._glyphs || obj._glyphs.length === 0) continue;
     } else if (obj.points.length < 2) {
@@ -96,13 +105,16 @@ function hexToArr(hex) {
 
 export function serialize() {
   return JSON.stringify({
-    version: 2,
+    version: 3,
     hoopId: "se700",
     units: state.units,
+    theme: state.theme,
     guides: state.guides,
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
-      points: o.points, params: o.params, visible: o.visible,
+      points: o.points, rotation: o.rotation || 0,
+      kind: o.kind, box: o.box,
+      params: o.params, visible: o.visible,
     })),
   }, null, 2);
 }
@@ -111,16 +123,21 @@ export function deserialize(json) {
   const data = typeof json === "string" ? JSON.parse(json) : json;
   state.hoopId = "se700"; // this build targets the SE700 only
   state.units = data.units === "mm" ? "mm" : "in";
+  if (data.theme === "dark" || data.theme === "light") state.theme = data.theme;
   state.guides = data.guides || [];
   state.objects = (data.objects || []).map((o) => ({
     id: nextId(),
-    type: o.type,
+    type: o.type === "text" ? "text" : "fill",
     name: o.name || `${o.type} ${_id}`,
     color: o.color || "#1f3f7c",
     points: o.points || [],
-    params: { ...defaultParams(o.type), ...(o.params || {}) },
+    rotation: o.rotation || 0,
+    kind: o.kind,
+    box: o.box,
+    params: { ...defaultParams(o.type === "text" ? "text" : "fill"), ...(o.params || {}) },
     visible: o.visible !== false,
   }));
   state.selectedId = null;
+  state.mode = "design";
   markDirty();
 }

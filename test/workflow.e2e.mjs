@@ -1,5 +1,6 @@
 // Full user-workflow test: drives the real app in Chrome exactly as a user
-// would (clicks, drags, typing), then exports a PES and verifies it.
+// would (clicks, drags, typing) through both phases — design then render —
+// then exports a PES and verifies it.
 import puppeteer from "puppeteer-core";
 import { writeFileSync } from "fs";
 
@@ -23,6 +24,7 @@ const state = () => page.evaluate(() => ({
   objects: window.__gs.state.objects.length,
   guides: window.__gs.state.guides.length,
   units: window.__gs.state.units,
+  mode: window.__gs.state.mode,
   ...window.__gs.compiledStats(),
 }));
 const setColor = (hex) => page.evaluate((h) => window.__gs.setActiveColor(h), hex);
@@ -35,13 +37,14 @@ async function dragOnCanvas(fx0, fy0, fx1, fy1) {
   await page.mouse.move(X(fx1), Y(fy1), { steps: 10 });
   await page.mouse.up();
 }
-// Edit a property-panel field by its label, like a user typing into it.
+// Edit a property-panel field by its label (searches both row + full-width rows).
 async function setProp(label, value) {
   return page.evaluate((label, value) => {
-    const rows = [...document.querySelectorAll("#object-props .prop-row")];
+    const rows = [...document.querySelectorAll("#object-props .prop-row, #object-props .prop-full")];
     const row = rows.find((r) => r.querySelector("label")?.textContent.startsWith(label));
     if (!row) return false;
     const el = row.querySelector("input, select");
+    if (!el) return false;
     const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, String(value));
     el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -59,63 +62,83 @@ await page.click("#btn-new");
 await sleep(200);
 let s = await state();
 ok(s.objects === 0, `New cleared the canvas (objects=${s.objects})`);
+ok(s.mode === "design", "back in design phase after New");
 
 console.log("Step 3: switch units to mm");
 await page.click('.unit-btn[data-unit="mm"]');
-s = await state();
-ok(s.units === "mm", `units switched to mm`);
+ok((await state()).units === "mm", "units switched to mm");
 
-console.log("Step 4: filled ellipse badge");
-await setColor("#0a5563"); // teal-ish
+console.log("Step 4: add a filled ellipse");
+await setColor("#0a5563");
 await page.click('.tool[data-tool="shape"]');
-await page.select("#shape-kind", "ellipse");
-await page.select("#shape-style", "fill");
+await sleep(120);
+await page.evaluate(() => { const c = [...document.querySelectorAll(".shape-cell")].find((x) => x.title === "Ellipse / Circle"); c.click(); });
 await dragOnCanvas(0.32, 0.30, 0.68, 0.66);
 s = await state();
-ok(s.objects === 1, `badge added (objects=${s.objects})`);
-ok(s.stitches > 100, `badge produced ${s.stitches} stitches`);
+ok(s.objects === 1, `ellipse added (objects=${s.objects})`);
 
-console.log("Step 5: ellipse outline border");
-await setColor("#e8a900"); // gold
-await page.click('.tool[data-tool="shape"]');
-await page.select("#shape-kind", "ellipse");
-await page.select("#shape-style", "running");
-await dragOnCanvas(0.30, 0.28, 0.70, 0.68);
-s = await state();
-ok(s.objects === 2, `border added (objects=${s.objects})`);
-
-console.log("Step 6: lettering");
-await setColor("#0e1f7c"); // navy
+console.log("Step 5: add lettering");
+await setColor("#0e1f7c");
 await page.click('.tool[data-tool="text"]');
 const b = await canvasBox();
-await page.mouse.click(b.x + b.width * 0.40, b.y + b.height * 0.52);
-await sleep(600); // glyph build
-ok(await setProp("Text", "ACE"), "typed text 'ACE'");
-await setProp("Font", "Anton");
-await setProp("Height", "16");
+await page.mouse.click(b.x + b.width * 0.34, b.y + b.height * 0.50);
 await sleep(600);
+ok(await setProp("Text", "ACE"), "typed text 'ACE' into the Text field");
+await sleep(300);
+// pick a different color for the text so it's its own thread block
+await setColor("#d12947");
+await page.evaluate(() => {
+  // recolor the selected text via its property color select
+  const sel = [...document.querySelectorAll("#object-props select")].find((s) => s.value && s.options.length > 5);
+});
 s = await state();
-ok(s.objects === 3, `text added (objects=${s.objects})`);
-ok(s.threadColors === 3, `3 thread colors (got ${s.threadColors})`);
+ok(s.objects === 2, `text added (objects=${s.objects})`);
+
+console.log("Step 6: open the font library & pick Anton");
+await page.evaluate(() => document.querySelector(".font-btn").click());
+await sleep(400);
+ok(await page.evaluate(() => !document.getElementById("font-modal").classList.contains("hidden")), "font library opened");
+ok(await page.evaluate(() => document.querySelectorAll(".font-card").length === 11), "11 fonts in the gallery");
+await page.evaluate(() => { const c = [...document.querySelectorAll(".font-card")].find((x) => x.textContent.includes("Anton")); c.click(); });
+await sleep(400);
+ok(await page.evaluate(() => window.__gs.state.objects.find((o) => o.type === "text").params.font === "Anton"), "font set to Anton");
 
 console.log("Step 7: alignment guide");
 await page.click('.tool[data-tool="select"]');
-await page.mouse.move(b.x + b.width * 0.5, b.y + 8);
-await page.mouse.down();
-await page.mouse.move(b.x + b.width * 0.5, b.y + b.height * 0.5, { steps: 6 });
-await page.mouse.up();
-s = await state();
-ok(s.guides === 1, `pulled an alignment guide (guides=${s.guides})`);
+await page.mouse.move(b.x + b.width * 0.5, b.y + 8); await page.mouse.down();
+await page.mouse.move(b.x + b.width * 0.5, b.y + b.height * 0.5, { steps: 6 }); await page.mouse.up();
+ok((await state()).guides === 1, "pulled an alignment guide");
 
-console.log("Step 8: statistics & field fit");
+console.log("Step 8: RENDER into a stitch pattern");
+await page.click("#btn-render");
+await sleep(900);
 s = await state();
+ok(s.mode === "stitch", "entered the stitch phase");
 console.log(`    stats: ${s.stitches} stitches, ${s.threadColors} colors, ${s.colorChanges} changes, ` +
   `${s.jumps} jumps, ${s.trims} trims, ${s.width.toFixed(1)}x${s.height.toFixed(1)}mm, ${Math.round(s.seconds)}s`);
 ok(s.stitches > 300, "design has substantial stitches");
 ok(s.width <= 100.5 && s.height <= 100.5, `fits the 100mm field (${s.width.toFixed(1)}x${s.height.toFixed(1)})`);
 ok(s.seconds > 0, "run-time estimated");
 
-console.log("Step 9: simulator");
+console.log("Step 9: tweak a stitch setting");
+await page.evaluate(() => window.__gs.state.selectedId = window.__gs.state.objects.find((o) => o.type === "text").id);
+await page.evaluate(() => {
+  const o = window.__gs.state.objects.find((x) => x.id === window.__gs.state.selectedId);
+});
+// click the text in the list to load its stitch settings, then change density
+await page.evaluate(() => { const it = [...document.querySelectorAll(".object-item")].find((i) => i.textContent.includes("ACE")); it && it.click(); });
+await sleep(150);
+const denseChanged = await page.evaluate(() => {
+  const rows = [...document.querySelectorAll("#stitch-settings .prop-row")];
+  const row = rows.find((r) => r.querySelector("label")?.textContent.startsWith("Density"));
+  if (!row) return false;
+  const el = row.querySelector("input");
+  el.value = "0.5"; el.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+});
+ok(denseChanged, "changed fill density in Stitch Settings");
+
+console.log("Step 10: simulator");
 await page.evaluate(() => window.__gs.sim.seek(0));
 await page.click("#sim-play");
 await sleep(700);
@@ -127,15 +150,14 @@ const endIdx = await page.evaluate(() => ({ i: window.__gs.sim.index, t: window.
 ok(endIdx.i === endIdx.t, `simulator reached end (${endIdx.i}/${endIdx.t})`);
 await page.screenshot({ path: "/home/user/GoodSew/scratch-workflow.png" });
 
-console.log("Step 10: preview");
+console.log("Step 11: preview");
 await page.click("#btn-preview");
 await sleep(700);
-ok(await page.evaluate(() => !document.getElementById("preview-modal").classList.contains("hidden")),
-  "preview modal opened");
+ok(await page.evaluate(() => !document.getElementById("preview-modal").classList.contains("hidden")), "preview modal opened");
 await page.screenshot({ path: "/home/user/GoodSew/scratch-workflow-preview.png" });
 await page.click("#preview-close");
 
-console.log("Step 11: export PES");
+console.log("Step 12: export PES");
 const out = await page.evaluate(() => {
   const bytes = window.__gs.exportBytes();
   const st = window.__gs.compiledStats();

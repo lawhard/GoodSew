@@ -5,6 +5,7 @@
 import {
   resample, pathLength, sub, add, scale, norm, perp, dist, bbox,
   rotatePoint, sampleAt, contoursScanline, contoursBBox,
+  segmentInContours,
 } from "./geometry.js";
 
 // --- Running stitch: evenly spaced stitches along the polyline. ---
@@ -55,11 +56,19 @@ export function generateFill(points, params) {
 }
 
 // Multi-contour tatami fill (even-odd rule, so inner contours become holes).
+//
+// Returns an ARRAY OF SUBPATHS (each an array of {x,y} points). The fill is
+// HOLE-AWARE: two consecutive penetration points are only connected within the
+// same subpath when the segment between them stays strictly inside the filled
+// region. When the next point can't be reached by an interior segment (because
+// the connector would cross a counter/hole or exit a concave outline), a NEW
+// subpath is started so the compiler trims+jumps across the gap instead of
+// dragging a stitch across the hole.
 export function fillContours(contours, params) {
   contours = contours.filter((c) => c.length >= 3);
   if (contours.length === 0) return [];
-  const spacing = Math.max(0.25, params.spacing || 0.45);
-  const stitchLen = Math.max(1, params.stitchLength || 3.0);
+  const spacing = Math.max(0.25, params.spacing ?? 0.4);
+  const stitchLen = Math.max(1, params.stitchLength ?? 3.0);
   const angle = ((params.angle || 0) * Math.PI) / 180;
 
   // Rotate region so fill rows are horizontal, scan, then rotate stitches back.
@@ -74,34 +83,60 @@ export function fillContours(contours, params) {
     const xs = contoursScanline(rot, y);
     // Pair up intersections into spans (even-odd fill rule).
     const spans = [];
-    for (let k = 0; k + 1 < xs.length; k += 2) spans.push([xs[k], xs[k + 1]]);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      if (xs[k + 1] - xs[k] > 1e-6) spans.push([xs[k], xs[k + 1]]);
+    }
     if (spans.length) rows.push({ y, spans, rowIndex });
     rowIndex++;
   }
 
-  // Boustrophedon traversal with a brick-offset stitch phase for a tatami look.
-  const out = [];
+  // Build the stitch points for one span (in rotated space) with a brick-offset
+  // phase so penetrations on adjacent rows don't line up into a visible ridge.
+  const spanPoints = (x0, x1, y, rowIndex) => {
+    const segLen = Math.abs(x1 - x0);
+    const n = Math.max(1, Math.round(segLen / stitchLen));
+    const phase = (rowIndex % 2) * (stitchLen / 2); // brick offset
+    const pts = [{ x: x0, y }];
+    for (let k = 1; k <= n; k++) {
+      const t = (k * stitchLen + phase) / segLen;
+      if (t >= 1) break;
+      pts.push({ x: x0 + (x1 - x0) * t, y });
+    }
+    pts.push({ x: x1, y });
+    return pts;
+  };
+
+  // Boustrophedon traversal. Order spans within a row by the current travel
+  // direction so the snake stays tight, and only stay in the same subpath when
+  // the connector to the next span/row stays inside the region.
+  const subs = [];
+  let cur = [];
+  let prev = null; // last emitted point (rotated space)
   let dir = 1;
+
+  const flush = () => {
+    if (cur.length >= 2) subs.push(cur);
+    cur = [];
+  };
+
   for (const row of rows) {
     const ordered = dir > 0 ? row.spans : row.spans.slice().reverse();
     for (const span of ordered) {
-      let [x0, x1] = dir > 0 ? span : [span[1], span[0]];
-      const segLen = Math.abs(x1 - x0);
-      const n = Math.max(1, Math.round(segLen / stitchLen));
-      const phase = (row.rowIndex % 2) * (stitchLen / 2); // brick offset
-      out.push({ x: x0, y: row.y });
-      for (let k = 1; k <= n; k++) {
-        let t = (k * stitchLen + phase) / segLen;
-        if (t >= 1) break;
-        out.push({ x: x0 + (x1 - x0) * t, y: row.y });
-      }
-      out.push({ x: x1, y: row.y });
+      const [x0, x1] = dir > 0 ? span : [span[1], span[0]];
+      const pts = spanPoints(x0, x1, row.y, row.rowIndex);
+      const head = pts[0];
+      // Decide whether we can connect from the previous point to this span's
+      // head with an ordinary stitch (segment must remain inside the region).
+      if (prev && !segmentInContours(prev, head, rot)) flush();
+      cur.push(...pts);
+      prev = pts[pts.length - 1];
     }
     dir = -dir;
   }
+  flush();
 
-  // Rotate stitches back into design space.
-  return out.map((p) => rotatePoint(p, center, angle));
+  // Rotate every subpath back into design space.
+  return subs.map((sub) => sub.map((p) => rotatePoint(p, center, angle)));
 }
 
 // Optional zig-zag underlay for fills/satin: a sparse running outline pass that
@@ -109,6 +144,23 @@ export function fillContours(contours, params) {
 export function generateUnderlay(points, inset = 1.0) {
   if (points.length < 2) return [];
   return resample(points, 3.5);
+}
+
+// Walk a CLOSED contour with running stitches, preserving every original vertex
+// so the path never chords across a corner. Resampling a closed loop as one
+// polyline (the old approach) cuts corners; for a hole/counter boundary that
+// chord can dip INTO the hole. Resampling edge-by-edge keeps the walk exactly on
+// the outline, which is inherently hole-safe.
+function edgeWalk(contour, spacing) {
+  if (contour.length < 2) return [];
+  const out = [contour[0]];
+  const closed = [...contour, contour[0]];
+  for (let i = 1; i < closed.length; i++) {
+    const seg = resample([closed[i - 1], closed[i]], spacing);
+    // resample includes the start point; skip it to avoid duplicates.
+    for (let k = 1; k < seg.length; k++) out.push(seg[k]);
+  }
+  return out;
 }
 
 // Generate stitches for a text object from its cached glyph contours
@@ -122,11 +174,14 @@ export function generateText(obj) {
   const subs = [];
   for (const contours of glyphs) {
     const moved = contours.map(shift);
-    const f = fillContours(moved, obj.params);
-    if (f.length) subs.push(f);
+    // fillContours now returns an array of hole-aware subpaths; spread them so
+    // the compiler trims/jumps across counters instead of stitching through.
+    for (const f of fillContours(moved, obj.params)) {
+      if (f.length) subs.push(f);
+    }
     if (obj.params.outline) {
       for (const c of moved) {
-        if (c.length >= 2) subs.push(resample([...c, c[0]], obj.params.outlineLen || 2.0));
+        if (c.length >= 2) subs.push(edgeWalk(c, obj.params.outlineLen || 2.0));
       }
     }
   }
@@ -154,20 +209,43 @@ export function generateForObject(obj) {
   }
 }
 
-// Fill plus optional underlay: an edge run around each contour and a coarse
-// perpendicular fill pass beneath the top tatami layer.
+// Fill plus optional underlay, tuned so a freshly-rendered object looks good
+// with no manual tuning. Underlay (before the top fill):
+//   (a) an edge walk around each contour (~2.5mm running stitch) — walking the
+//       outline is inherently hole-safe, and
+//   (b) a low-density fill pass roughly perpendicular to the top fill (spacing
+//       ~1.8mm, angle = topAngle + 90) to stabilize the fabric.
+// Then the top tatami fill (default spacing ~0.4mm, stitch length ~3.0mm, with
+// a brick offset between rows). All passes are hole-aware via fillContours.
 function fillWithUnderlay(contours, params) {
   const valid = contours.filter((c) => c.length >= 3);
   if (valid.length === 0) return [];
+  const topAngle = params.angle ?? 0;
+  const topSpacing = Math.max(0.25, params.spacing ?? 0.4);
   const subs = [];
+
   if (params.underlay) {
-    for (const c of valid) subs.push(resample([...c, c[0]], 2.5)); // edge run
-    subs.push(fillContours(valid, {
+    // (a) Edge walk around each contour outline (closed loop, corner-preserving).
+    for (const c of valid) subs.push(edgeWalk(c, 2.5));
+    // (b) Perpendicular low-density stabilizing fill (hole-aware).
+    for (const f of fillContours(valid, {
       ...params,
-      spacing: Math.max(1.5, (params.spacing || 0.45) * 3),
-      angle: (params.angle || 0) + 90,
-    }));
+      spacing: Math.max(1.8, topSpacing * 4),
+      stitchLength: Math.max(2.5, params.stitchLength ?? 3.0),
+      angle: topAngle + 90,
+    })) {
+      if (f.length) subs.push(f);
+    }
   }
-  subs.push(fillContours(valid, params));
+
+  // Top tatami fill — apply the smart defaults so the look is good untuned.
+  for (const f of fillContours(valid, {
+    ...params,
+    spacing: topSpacing,
+    stitchLength: Math.max(1, params.stitchLength ?? 3.0),
+    angle: topAngle,
+  })) {
+    if (f.length) subs.push(f);
+  }
   return subs;
 }
