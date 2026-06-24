@@ -7,6 +7,7 @@ export class Simulator {
     this.index = 0;        // number of plan entries "sewn"
     this.total = 0;
     this.playing = false;
+    this.engaged = false;  // false = show full design; true = show up to `index`
     this.speed = 40;       // plan-entries advanced per second tick scaler
     this._acc = 0;
     this._raf = null;
@@ -16,19 +17,22 @@ export class Simulator {
   setPlan(plan) {
     this.total = plan ? plan.length : 0;
     if (this.index > this.total) this.index = this.total;
+    this.engaged = false; // a freshly compiled design shows in full
     this._emit();
   }
 
   seek(i) {
+    this.engaged = true;
     this.index = Math.max(0, Math.min(this.total, Math.round(i)));
     this._emit();
   }
 
-  toStart() { this.pause(); this.seek(0); }
+  toStart() { this.pause(); this.engaged = true; this.seek(0); }
   toEnd() { this.pause(); this.seek(this.total); }
 
   play() {
     if (this.total === 0) return;
+    this.engaged = true;
     if (this.index >= this.total) this.index = 0;
     this.playing = true;
     this._last = performance.now();

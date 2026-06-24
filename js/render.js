@@ -76,8 +76,9 @@ export function render(ctx, state, compiled, sim, opts) {
   ctx.moveTo(o.x, o.y + fh / 2); ctx.lineTo(o.x + fw, o.y + fh / 2);
   ctx.stroke();
 
-  // Simulation defines how much of the plan is "sewn".
-  const simActive = sim && sim.total > 0;
+  // Simulation defines how much of the plan is "sewn". When the user hasn't
+  // engaged the simulator the full design is shown.
+  const simActive = sim && sim.total > 0 && sim.engaged;
   const upto = simActive ? sim.index : (compiled ? compiled.plan.length : 0);
 
   // Draw compiled stitches (the authoritative rendering).
