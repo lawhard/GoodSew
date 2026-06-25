@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.4.8"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.9"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -237,7 +237,7 @@ function cloneData(o) {
   return JSON.parse(JSON.stringify({
     type: o.type, name: o.name, color: o.color, kind: o.kind, box: o.box,
     rotation: o.rotation || 0, points: o.points, params: o.params,
-    visible: o.visible, groupId: o.groupId,
+    visible: o.visible, groupId: o.groupId, base: o._base,
   }));
 }
 // Instantiate cloned object data offset by `off` mm, select the new copies.
@@ -248,6 +248,7 @@ function pasteData(dataArr, off = 5) {
   for (const d of dataArr) {
     const o = JSON.parse(JSON.stringify(d));
     o.id = nextId();
+    o._base = o.base; // SVG art base contours (cloneData stores them as `base`)
     if (o.box) { o.box.x += off; o.box.y += off; }
     o.points = (o.points || []).map((p) => ({ x: p.x + off, y: p.y + off }));
     if (o.groupId != null) { // keep a copied group together under a fresh id
@@ -268,14 +269,16 @@ function importSVG(text) {
   try { parsed = parseSVG(text, getHoop(state.hoopId)); }
   catch (e) { toast("SVG import failed: " + e.message, true); return; }
   const ids = [];
-  for (const it of parsed.items) {
+  const gid = nextId(); // group every piece so the logo selects/moves as one
+  parsed.items.forEach((it, i) => {
     const obj = makeObject("fill", [], it.color);
     obj.kind = "svg"; obj._base = it.base; obj.box = { ...parsed.box };
     obj.params.fillMode = it.outline ? "outline" : "fill";
-    obj.name = it.outline ? "SVG outline" : "SVG shape";
+    obj.name = `Logo part ${i + 1}`;
+    obj.groupId = gid;
     rebuildShape(obj);
     state.objects.push(obj); ids.push(obj.id);
-  }
+  });
   setSel(ids);
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); commit(); needsRender = true;
   toast(`Imported ${ids.length} path${ids.length === 1 ? "" : "s"} from SVG`);
@@ -400,7 +403,7 @@ async function renderStitches() {
 // ----------------------------------------------------------------- tools
 function setTool(t) {
   if (t !== "shape") $("shape-popover").classList.add("hidden");
-  if (t === "image") { $("file-image").click(); return; }
+  if (t === "svglogo") { $("file-svg").click(); return; }
   tool = t;
   document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
   const hints = {
@@ -874,22 +877,15 @@ function refreshObjectList() {
     const sub = document.createElement("span"); sub.className = "obj-sub";
     sub.textContent = obj.type === "text" ? `Text · ${obj.params.font}` : `Shape · ${obj.name}`;
     main.append(label, sub);
-    const idx = state.objects.indexOf(obj);
-    const up = document.createElement("button");
-    up.className = "obj-btn"; up.textContent = "▲"; up.title = "Move up (forward)";
-    up.disabled = idx === state.objects.length - 1;
-    up.onclick = (e) => { e.stopPropagation(); reorder(obj.id, +1); };
-    const down = document.createElement("button");
-    down.className = "obj-btn"; down.textContent = "▼"; down.title = "Move down (back)";
-    down.disabled = idx === 0;
-    down.onclick = (e) => { e.stopPropagation(); reorder(obj.id, -1); };
+    const handle = document.createElement("span");
+    handle.className = "obj-handle"; handle.textContent = "⠿"; handle.title = "Drag to reorder layer";
     const vis = document.createElement("button");
     vis.className = "obj-btn"; vis.textContent = obj.visible ? "👁" : "🚫"; vis.title = "Show / hide";
     vis.onclick = (e) => { e.stopPropagation(); obj.visible = !obj.visible; markDirty(); if (state.mode === "stitch") recompile(); refreshObjectList(); needsRender = true; commit(); };
     const del = document.createElement("button");
     del.className = "obj-btn danger"; del.textContent = "🗑"; del.title = "Delete";
     del.onclick = (e) => { e.stopPropagation(); setSel([obj.id]); deleteSelected(); };
-    li.append(icon, main, up, down, vis, del);
+    li.append(handle, icon, main, vis, del);
     li.onclick = (e) => {
       if (e.shiftKey) {
         const ids = state.selectedIds.slice();
@@ -899,8 +895,44 @@ function refreshObjectList() {
       } else { setSel([obj.id]); }
       refreshProps(); refreshObjectList(); needsRender = true;
     };
+    // drag-and-drop layer reordering
+    li.draggable = true;
+    li.dataset.id = obj.id;
+    li.ondragstart = (e) => { dragLayerId = obj.id; e.dataTransfer.effectAllowed = "move"; li.classList.add("dragging"); };
+    li.ondragend = () => { dragLayerId = null; ul.querySelectorAll(".object-item").forEach((x) => x.classList.remove("drop-above", "drop-below", "dragging")); };
+    li.ondragover = (e) => {
+      if (dragLayerId == null || dragLayerId === obj.id) return;
+      e.preventDefault();
+      const r = li.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      li.classList.toggle("drop-below", after);
+      li.classList.toggle("drop-above", !after);
+    };
+    li.ondragleave = () => li.classList.remove("drop-above", "drop-below");
+    li.ondrop = (e) => {
+      e.preventDefault();
+      const r = li.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      if (dragLayerId != null && dragLayerId !== obj.id) moveLayer(dragLayerId, obj.id, after);
+    };
     ul.appendChild(li);
   });
+}
+
+let dragLayerId = null;
+// Move a layer (by id) to just above/below the target id, in the displayed
+// (reversed) order, then sync the draw-order array.
+function moveLayer(draggedId, targetId, after) {
+  const disp = state.objects.slice().reverse(); // display order: top = drawn last
+  const from = disp.findIndex((o) => o.id === draggedId);
+  if (from < 0) return;
+  const [m] = disp.splice(from, 1);
+  let to = disp.findIndex((o) => o.id === targetId);
+  if (to < 0) disp.push(m);
+  else disp.splice(after ? to + 1 : to, 0, m);
+  state.objects = disp.reverse();
+  markDirty(); if (state.mode === "stitch") recompile();
+  commit(); refreshObjectList(); needsRender = true;
 }
 
 // ----------------------------------------------------------- properties
@@ -926,7 +958,7 @@ function refreshProps() {
 
 // Panel shown when 2+ objects are selected: align / distribute / group.
 function buildMultiProps(host) {
-  $("props-title").textContent = `${state.selectedIds.length} objects`;
+  const objs = selectedObjects();
   const grid = (labels) => {
     const g = document.createElement("div"); g.className = "layout-grid";
     for (const [txt, fn, title] of labels) {
@@ -936,6 +968,30 @@ function buildMultiProps(host) {
     return g;
   };
   const lbl = (t) => { const d = document.createElement("div"); d.className = "prop-sublabel"; d.textContent = t; host.appendChild(d); };
+
+  // Logo (grouped) selection: offer a per-color recolor submenu for its parts.
+  const grouped = objs.length > 1 && objs.every((o) => o.groupId != null && o.groupId === objs[0].groupId);
+  $("props-title").textContent = grouped ? `Logo · ${objs.length} parts` : `${state.selectedIds.length} objects`;
+  if (grouped) {
+    lbl("Logo colors — change a thread used by the logo");
+    const colors = [...new Set(objs.map((o) => o.color))];
+    for (const col of colors) {
+      const wrap = document.createElement("div"); wrap.className = "color-row";
+      const dot = document.createElement("span"); dot.className = "color-dot"; dot.style.background = col;
+      const sel = document.createElement("select"); sel.className = "select";
+      for (const t of BROTHER_PALETTE) { const o2 = document.createElement("option"); o2.value = rgbToHex(t.rgb); o2.textContent = `#${t.i} ${t.name}`; sel.appendChild(o2); }
+      sel.value = col;
+      sel.onchange = () => {
+        const nc = sel.value;
+        objs.filter((o) => o.color === col).forEach((o) => (o.color = nc));
+        markDirty(); if (state.mode === "stitch") recompile();
+        commit(); refreshObjectList(); refreshProps(); needsRender = true;
+      };
+      const cnt = document.createElement("span"); cnt.className = "muted"; cnt.style.fontSize = "10.5px";
+      cnt.textContent = `${objs.filter((o) => o.color === col).length}×`;
+      wrap.append(dot, sel, cnt); host.appendChild(wrap);
+    }
+  }
 
   lbl("Align");
   host.appendChild(grid([
@@ -1066,11 +1122,31 @@ function refreshStitchSettings() {
   const p = obj.params;
   const recompileLive = () => { markDirty(); recompile(); needsRender = true; };
 
+  // --- Texture (stitch type) picker with little pattern thumbnails ---
+  const sub = document.createElement("div"); sub.className = "prop-sublabel"; sub.textContent = "Texture";
+  host.appendChild(sub);
+  const tex = document.createElement("div"); tex.className = "texture-grid";
+  const cur = p.stitchType || "auto";
+  [["auto", "Auto"], ["satin", "Satin"], ["fill", "Fill"]].forEach(([val, label]) => {
+    const cell = document.createElement("button");
+    cell.className = "texture-cell" + (cur === val ? " active" : "");
+    cell.title = val === "auto" ? "Pick automatically by width" : val === "satin" ? "Smooth satin columns" : "Tatami fill";
+    const cv = document.createElement("canvas"); cv.width = 96; cv.height = 40;
+    drawTextureThumb(cv, val);
+    const cap = document.createElement("span"); cap.textContent = label;
+    cell.append(cv, cap);
+    cell.onclick = () => { p.stitchType = val; recompileLive(); commit(); refreshStitchSettings(); };
+    tex.appendChild(cell);
+  });
+  host.appendChild(tex);
+
   row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { p.spacing = v; recompileLive(); }));
   row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { p.stitchLength = v; recompileLive(); }));
   row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { p.angle = v; recompileLive(); }));
-  // Regions narrower than this auto-stitch as satin (raise to force satin, lower to force fill).
-  row(host, "Satin ≤ width (mm)", numInput(p.satinMaxWidth ?? 6, 0.5, 0, (v) => { p.satinMaxWidth = v; recompileLive(); }));
+  if (cur === "auto") {
+    // Only relevant in Auto mode: regions narrower than this become satin.
+    row(host, "Satin ≤ width (mm)", numInput(p.satinMaxWidth ?? 6, 0.5, 0, (v) => { p.satinMaxWidth = v; recompileLive(); }));
+  }
   if (p.fillMode === "outline") {
     row(host, "Border width (mm)", numInput(p.borderWidth ?? 2, 0.2, 0.5, (v) => { p.borderWidth = v; recompileLive(); }));
   }
@@ -1082,6 +1158,30 @@ function refreshStitchSettings() {
   const out = document.createElement("input"); out.type = "checkbox"; out.checked = !!p.outline;
   out.onchange = () => { p.outline = out.checked; recompileLive(); commit(); };
   row(host, "Outline pass", out);
+}
+
+// Draw a small thumbnail of a stitch texture (satin / tatami / auto) so the
+// user can pick by sight.
+function drawTextureThumb(cv, kind) {
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, cv.width, cv.height);
+  g.fillStyle = "#eef1f5"; g.fillRect(0, 0, cv.width, cv.height);
+  g.strokeStyle = "#2e4a82"; g.lineWidth = 1.4; g.lineCap = "round";
+  const W = cv.width, H = cv.height, pad = 5;
+  const satin = (x0, x1) => { // dense vertical zig-zag column between x0..x1
+    g.beginPath();
+    let up = true;
+    for (let x = x0; x <= x1; x += 3) { g.moveTo(x, up ? pad : H - pad); g.lineTo(x, up ? H - pad : pad); up = !up; }
+    g.stroke();
+  };
+  const fill = (x0, x1) => { // horizontal tatami rows
+    g.beginPath();
+    for (let y = pad + 2; y <= H - pad; y += 5) { g.moveTo(x0, y); g.lineTo(x1, y); }
+    g.stroke();
+  };
+  if (kind === "satin") satin(pad, W - pad);
+  else if (kind === "fill") fill(pad, W - pad);
+  else { satin(pad, W / 2 - 3); fill(W / 2 + 3, W - pad); } // auto = both
 }
 
 // ----------------------------------------------------------- font gallery
@@ -1147,21 +1247,6 @@ $("btn-new").onclick = () => {
   resetHistory();
   toast("New design");
 };
-$("btn-import-image").onclick = () => $("file-image").click();
-$("file-image").onchange = (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  const img = new Image();
-  img.onload = () => {
-    state.image = img;
-    const hoop = getHoop(state.hoopId);
-    const sc = (hoop.w * 0.8) / img.width;
-    state.imageTransform = { x: hoop.w * 0.1, y: hoop.h * 0.1, scale: sc, opacity: 0.5 };
-    needsRender = true; toast("Image imported — trace over it with shapes & text");
-  };
-  img.src = URL.createObjectURL(f);
-  e.target.value = "";
-};
-$("btn-import-svg").onclick = () => $("file-svg").click();
 $("file-svg").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
@@ -1313,7 +1398,7 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText, importSVG, optimizeOrder,
+    addText, addShape, bakeText, importSVG, optimizeOrder, moveLayer,
     quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },

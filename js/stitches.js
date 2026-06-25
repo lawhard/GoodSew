@@ -296,11 +296,17 @@ export function fillContours(contours, params) {
     for (let si = 0; si < rows[ri].length; si++) seeds.push({ ri, si });
   seeds.sort((a, b) => (a.ri - b.ri) || (span(a.ri, a.si).x0 - span(b.ri, b.si).x0));
 
+  // Manual override: "satin" / "fill" force the type; "auto" (default) chooses
+  // by component width.
+  const forced = params.stitchType;
   for (const seed of seeds) {
     if (visited.has(id(seed.ri, seed.si))) continue;
     const order = walkComponent(seed.ri, seed.si);
-    const w = componentWidth(order);
-    if (w <= satinMax && w >= satinMin) emitSatin(order, subs);
+    let satin;
+    if (forced === "satin") satin = true;
+    else if (forced === "fill") satin = false;
+    else { const w = componentWidth(order); satin = (w <= satinMax && w >= satinMin); }
+    if (satin) emitSatin(order, subs);
     else emitTatami(order, subs);
   }
 

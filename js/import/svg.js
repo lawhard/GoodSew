@@ -53,10 +53,16 @@ export function parseSVG(text, hoop) {
       if (!len || !isFinite(len)) continue;
       const step = Math.max(0.4, len / 800);
       const breakDist = step * 6; // a jump this big = a new sub-path/hole
+      // getPointAtLength returns the element's LOCAL coords and ignores ancestor
+      // <g transform> / the element's own transform — which is why transformed
+      // logos came in flipped/scattered. Map every sample through the element's
+      // CTM (to the <svg> viewport) so positions/orientation are correct.
+      const ctm = (typeof el.getCTM === "function") ? el.getCTM() : null;
       const contours = [];
       let cur = [], prev = null;
       for (let s = 0; s <= len; s += step) {
-        const pt = el.getPointAtLength(s);
+        let pt = el.getPointAtLength(s);
+        if (ctm && pt.matrixTransform) pt = pt.matrixTransform(ctm);
         const p = { x: pt.x, y: pt.y };
         if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) > breakDist) {
           if (cur.length >= 3) contours.push(cur);

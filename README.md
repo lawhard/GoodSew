@@ -44,11 +44,16 @@ spin. Everything is meant to feel like Word or an image markup tool.
   heart. Pick one, drag to place (Shift for an even shape), then resize/rotate
   like anything else. Filled or outline-only.
 - **Background image tracing** — import any image and lay artwork over it.
-- **SVG import** — bring a logo or vector art in as editable objects (**SVG…**
-  button). Paths and shapes are flattened to contours (sub-paths/holes detected
-  automatically), fitted to the hoop, and colored from their `fill`; `fill:none`
-  elements come in as outline (satin-border) objects. Imported art moves,
-  resizes, rotates, recolors and stitches like any other object.
+- **SVG logo import** — bring a logo or vector art in as editable objects (the
+  **SVG logo** button). Paths and shapes are flattened through each element's
+  transform matrix (so transformed/flipped logos import correctly), with
+  sub-paths/holes detected automatically, fitted to the hoop, and colored from
+  their `fill` (`fill:none` → satin-border outline). All pieces are **grouped**
+  so the logo moves/selects as one; selecting it shows a **Logo colors** submenu
+  to recolor each thread used. Imported art moves, resizes, rotates and stitches
+  like anything else.
+- **Texture picker** — per object, choose the stitch texture from labelled
+  thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**, or **Fill**.
 
 ### ② Render phase — stitch it
 Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a
@@ -79,7 +84,7 @@ and an optional **outline pass**, then simulate and export.
 - **Layout tools** — multi-select (Shift+click), copy / cut / paste / duplicate
   (Ctrl C/X/V/D), select-all (Ctrl+A), group / ungroup, and align / distribute
   (left/center/right, top/middle/bottom, spread H/V) from the multi-select panel.
-- **Layers** — reorder objects (▲ / ▼ in the Objects panel) to set draw / stitch order.
+- **Layers** — drag objects up/down in the Objects panel to set draw / stitch order.
 - **Pan & zoom** — scroll to zoom; drag any empty part of the plate to pan (or hold Space / middle-drag).
 - **Product preview** — see the design composited at *true physical scale* onto
   a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSew — SE700 Embroidery Designer</title>
-  <link rel="stylesheet" href="css/styles.css?v=0.4.8" />
+  <link rel="stylesheet" href="css/styles.css?v=0.4.9" />
 </head>
 <body data-mode="design" data-theme="light">
   <header id="topbar">
@@ -16,8 +16,6 @@
 
     <div class="topbar-actions">
       <button id="btn-new" class="btn" title="New design">New</button>
-      <button id="btn-import-image" class="btn" title="Import a background image to trace">Image…</button>
-      <button id="btn-import-svg" class="btn mode-design" title="Import an SVG as editable objects">SVG…</button>
       <button id="btn-save-json" class="btn" title="Save project">Save</button>
       <button id="btn-load-json" class="btn" title="Open project">Open</button>
 
@@ -39,7 +37,6 @@
       <span class="sep"></span>
       <button id="btn-theme" class="btn btn-icon" title="Toggle light / dark">◐</button>
 
-      <input type="file" id="file-image" accept="image/*" hidden />
       <input type="file" id="file-svg" accept=".svg,image/svg+xml" hidden />
       <input type="file" id="file-json" accept=".gsew,.json,application/json" hidden />
     </div>
@@ -54,7 +51,7 @@
         <button class="tool" data-tool="select" title="Select / move / resize (V)"><span class="ic">⬚</span><span>Select</span></button>
         <button class="tool" data-tool="text" title="Add text (T)"><span class="ic">T</span><span>Text</span></button>
         <button class="tool" data-tool="shape" title="Add a shape (S)"><span class="ic">◆</span><span>Shape</span></button>
-        <button class="tool" data-tool="image" id="tool-image" title="Import an image"><span class="ic">🖼</span><span>Image</span></button>
+        <button class="tool" data-tool="svglogo" id="tool-svglogo" title="Import an SVG logo as editable objects"><span class="ic">✦</span><span>SVG logo</span></button>
       </div>
 
       <div class="tool-group mode-design">
@@ -73,7 +70,6 @@
 
       <div class="tool-group">
         <div class="group-label">View</div>
-        <label class="check"><input type="checkbox" id="chk-show-image" checked /> Image</label>
         <label class="check"><input type="checkbox" id="chk-show-grid" checked /> Grid</label>
       </div>
     </aside>
@@ -91,7 +87,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.4.8</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.4.9</div>
     </main>
 
     <!-- Right -->
@@ -202,6 +198,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.4.8"></script>
+  <script type="module" src="js/app.js?v=0.4.9"></script>
 </body>
 </html>
