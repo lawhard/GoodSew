@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.1"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.2"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -381,6 +381,10 @@ function setMode(mode) {
   if (editing) closeTextEditor(true);
   state.mode = mode;
   document.body.dataset.mode = mode;
+  // The simulator footer shows/hides with the mode, which changes the canvas
+  // area's height — re-fit the canvas so it doesn't overflow onto (and block)
+  // the transport controls.
+  resize();
   if (mode === "stitch") { ensureCompiled(); sim.toStart(); sim.engaged = false; sim.seek(0); sim.engaged = false; needsRender = true; }
   setTool("select");
   refreshProps();
@@ -1136,8 +1140,18 @@ function refreshStitchSettings() {
   const obj = selectedObject();
   if (!obj) { host.className = "props-empty"; host.textContent = "Select an object to fine-tune its fill."; return; }
   host.className = ""; host.innerHTML = "";
+  // Edits apply to EVERY selected layer (so a multi-part logo updates as one),
+  // while the displayed values come from the primary selection.
+  const objs = selectedObjects().length ? selectedObjects() : [obj];
   const p = obj.params;
+  const setAll = (k, v) => objs.forEach((o) => { o.params[k] = v; });
   const recompileLive = () => { markDirty(); recompile(); needsRender = true; };
+
+  if (objs.length > 1) {
+    const note = document.createElement("div"); note.className = "prop-sublabel";
+    note.textContent = `Applies to ${objs.length} selected layers`;
+    host.appendChild(note);
+  }
 
   // --- Thread-pattern (texture) picker with little pattern thumbnails ---
   const sub = document.createElement("div"); sub.className = "prop-sublabel"; sub.textContent = "Thread pattern";
@@ -1158,28 +1172,28 @@ function refreshStitchSettings() {
     drawTextureThumb(cv, t.id);
     const cap = document.createElement("span"); cap.textContent = t.label;
     cell.append(cv, cap);
-    cell.onclick = () => { Object.assign(p, t.set); recompileLive(); commit(); refreshStitchSettings(); };
+    cell.onclick = () => { objs.forEach((o) => Object.assign(o.params, t.set)); recompileLive(); commit(); refreshStitchSettings(); };
     tex.appendChild(cell);
   }
   host.appendChild(tex);
 
-  row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { p.spacing = v; recompileLive(); }));
-  row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { p.stitchLength = v; recompileLive(); }));
-  row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { p.angle = v; recompileLive(); }));
+  row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { setAll("spacing", v); recompileLive(); }));
+  row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { setAll("stitchLength", v); recompileLive(); }));
+  row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { setAll("angle", v); recompileLive(); }));
   if (cur === "auto") {
     // Only relevant in Auto mode: regions narrower than this become satin.
-    row(host, "Satin ≤ width (mm)", numInput(p.satinMaxWidth ?? 6, 0.5, 0, (v) => { p.satinMaxWidth = v; recompileLive(); }));
+    row(host, "Satin ≤ width (mm)", numInput(p.satinMaxWidth ?? 6, 0.5, 0, (v) => { setAll("satinMaxWidth", v); recompileLive(); }));
   }
   if (p.fillMode === "outline") {
-    row(host, "Border width (mm)", numInput(p.borderWidth ?? 2, 0.2, 0.5, (v) => { p.borderWidth = v; recompileLive(); }));
+    row(host, "Border width (mm)", numInput(p.borderWidth ?? 2, 0.2, 0.5, (v) => { setAll("borderWidth", v); recompileLive(); }));
   }
 
   const under = document.createElement("input"); under.type = "checkbox"; under.checked = p.underlay !== false;
-  under.onchange = () => { p.underlay = under.checked; recompileLive(); commit(); };
+  under.onchange = () => { setAll("underlay", under.checked); recompileLive(); commit(); };
   row(host, "Underlay", under);
 
   const out = document.createElement("input"); out.type = "checkbox"; out.checked = !!p.outline;
-  out.onchange = () => { p.outline = out.checked; recompileLive(); commit(); };
+  out.onchange = () => { setAll("outline", out.checked); recompileLive(); commit(); };
   row(host, "Outline pass", out);
 }
 
