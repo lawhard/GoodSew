@@ -44,6 +44,11 @@ spin. Everything is meant to feel like Word or an image markup tool.
   heart. Pick one, drag to place (Shift for an even shape), then resize/rotate
   like anything else. Filled or outline-only.
 - **Background image tracing** — import any image and lay artwork over it.
+- **SVG import** — bring a logo or vector art in as editable objects (**SVG…**
+  button). Paths and shapes are flattened to contours (sub-paths/holes detected
+  automatically), fitted to the hoop, and colored from their `fill`; `fill:none`
+  elements come in as outline (satin-border) objects. Imported art moves,
+  resizes, rotates, recolors and stitches like any other object.
 
 ### ② Render phase — stitch it
 Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a

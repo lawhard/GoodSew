@@ -160,6 +160,8 @@ function drawObjectsSolid(ctx, cam, state, TH) {
       const ax = obj.points[0] ? obj.points[0].x : 0;
       const ay = obj.points[0] ? obj.points[0].y : 0;
       path = pathFromContours(ctx, cam, obj._glyphs.flat(), ax, ay);
+    } else if (obj.contours && obj.contours.length) {
+      path = pathFromContours(ctx, cam, obj.contours); // SVG art etc. (holes via evenodd)
     } else if (obj.points.length >= 3) {
       path = pathFromContours(ctx, cam, [obj.points]);
     } else { continue; }

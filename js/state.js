@@ -117,7 +117,7 @@ export function serialize() {
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
       points: o.points, rotation: o.rotation || 0,
-      kind: o.kind, box: o.box, groupId: o.groupId,
+      kind: o.kind, box: o.box, groupId: o.groupId, base: o._base,
       params: o.params, visible: o.visible,
     })),
   }, null, 2);
@@ -139,6 +139,7 @@ export function deserialize(json) {
     kind: o.kind,
     box: o.box,
     groupId: o.groupId,
+    _base: o.base,
     params: { ...defaultParams(o.type === "text" ? "text" : "fill"), ...(o.params || {}) },
     visible: o.visible !== false,
   }));

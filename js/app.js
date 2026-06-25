@@ -18,8 +18,9 @@ import { SHAPES, buildShape } from "./shapes.js";
 import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js";
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
+import { parseSVG } from "./import/svg.js";
 
-const APP_VERSION = "0.4.6"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.7"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -92,7 +93,7 @@ function historySnapshot() {
   return JSON.stringify({
     objects: state.objects.map((o) => ({
       id: o.id, type: o.type, name: o.name, color: o.color, kind: o.kind,
-      box: o.box, rotation: o.rotation || 0, points: o.points,
+      box: o.box, rotation: o.rotation || 0, points: o.points, base: o._base,
       params: { ...o.params }, visible: o.visible,
     })),
     guides: state.guides,
@@ -114,7 +115,7 @@ function resetHistory() { undoStack = []; redoStack = []; commit(); }
 
 function restore(snap) {
   const data = JSON.parse(snap);
-  state.objects = data.objects.map((o) => ({ ...o, params: { ...o.params } }));
+  state.objects = data.objects.map((o) => ({ ...o, _base: o.base, params: { ...o.params } }));
   state.guides = data.guides || [];
   setSel((data.selectedIds || (data.selectedId != null ? [data.selectedId] : [])).filter((id) => data.objects.some((o) => o.id === id)));
   state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
@@ -204,6 +205,25 @@ function pasteData(dataArr, off = 5) {
   markDirty(); if (state.mode === "stitch") recompile();
   commit(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
 }
+// Import an SVG's geometry as editable fill/outline objects.
+function importSVG(text) {
+  let parsed;
+  try { parsed = parseSVG(text, getHoop(state.hoopId)); }
+  catch (e) { toast("SVG import failed: " + e.message, true); return; }
+  const ids = [];
+  for (const it of parsed.items) {
+    const obj = makeObject("fill", [], it.color);
+    obj.kind = "svg"; obj._base = it.base; obj.box = { ...parsed.box };
+    obj.params.fillMode = it.outline ? "outline" : "fill";
+    obj.name = it.outline ? "SVG outline" : "SVG shape";
+    rebuildShape(obj);
+    state.objects.push(obj); ids.push(obj.id);
+  }
+  setSel(ids);
+  markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); commit(); needsRender = true;
+  toast(`Imported ${ids.length} path${ids.length === 1 ? "" : "s"} from SVG`);
+}
+
 function copySelection() { const o = selectedObjects(); if (o.length) clipboard = o.map(cloneData); }
 function pasteClipboard() { pasteData(clipboard); }
 function duplicateSelection() { pasteData(selectedObjects().map(cloneData)); }
@@ -253,6 +273,14 @@ function distributeSelected(axis) {
 // ------------------------------------------------------------ object baking
 function rebuildShape(obj) {
   if (!obj.box) return;
+  // Imported SVG art: map its normalized base contours into the box (+rotation).
+  if (obj.kind === "svg" && obj._base) {
+    const b = obj.box, a = rad(obj.rotation || 0), c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    const map = (p) => { const q = { x: b.x + p.x * b.w, y: b.y + p.y * b.h }; return a ? rotatePoint(q, c, a) : q; };
+    obj.contours = obj._base.map((ct) => ct.map(map));
+    obj.points = obj.contours[0] || [];
+    return;
+  }
   let pts = buildShape(obj.kind || "rect", obj.box);
   const a = rad(obj.rotation || 0);
   if (a) {
@@ -494,7 +522,10 @@ canvas.addEventListener("mousemove", (e) => {
     const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
     for (const it of drag.items) {
       it.obj.points = it.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
-      if (it.orig.box) it.obj.box = { ...it.orig.box, x: it.orig.box.x + dx, y: it.orig.box.y + dy };
+      if (it.orig.box) {
+        it.obj.box = { ...it.orig.box, x: it.orig.box.x + dx, y: it.orig.box.y + dy };
+        if (it.obj.kind === "svg") rebuildShape(it.obj); // remap contours to the moved box
+      }
     }
     markDirty();
   } else if (drag.mode === "resize") {
@@ -1072,6 +1103,15 @@ $("file-image").onchange = (e) => {
   img.src = URL.createObjectURL(f);
   e.target.value = "";
 };
+$("btn-import-svg").onclick = () => $("file-svg").click();
+$("file-svg").onchange = (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => importSVG(reader.result);
+  reader.readAsText(f);
+  e.target.value = "";
+};
+
 $("btn-save-json").onclick = () => { download(serialize(), "design.gsew", "application/json"); toast("Project saved"); };
 $("btn-load-json").onclick = () => $("file-json").click();
 $("file-json").onchange = (e) => {
@@ -1215,7 +1255,7 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText,
+    addText, addShape, bakeText, importSVG,
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
     setSel, selectedObjects, copySelection, pasteClipboard, duplicateSelection, groupSelection, ungroupSelection, alignSelected, distributeSelected,
