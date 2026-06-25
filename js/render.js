@@ -301,15 +301,29 @@ function drawGrid(ctx, cam, hoop, o, fw, fh, TH) {
 }
 
 // ---------------- stitch-mode drawing ----------------
+// Nudge a hex color lighter (amt>0) or darker (amt<0). amt in -1..1.
+function shade(hex, amt) {
+  const h = (hex || "#333333").replace("#", "");
+  let r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  if (amt >= 0) { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+  else { const f = 1 + amt; r *= f; g *= f; b *= f; }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+}
+
 function drawStitches(ctx, cam, compiled, upto, view) {
   const { plan, colors } = compiled;
   let penDown = false;
   let last = null;
-  // Render each stitch at realistic thread width so a dense fill reads as solid
-  // coverage instead of thin stripes. ~0.4 mm thread, never thinner than ~1.1 px.
-  ctx.lineWidth = Math.max(1.1, cam.pxPerMm * 0.4);
+  // Thread is drawn in two strokes per stitch for fidelity: a full-width body
+  // (realistic ~0.4 mm coverage) plus a thin, lighter "sheen" core down the
+  // middle. The sheen makes individual threads readable even where the fill is
+  // thick/dense (otherwise it reads as a solid blob), and a slightly darker
+  // edge gives the stitches definition.
+  const bodyW = Math.max(1.0, cam.pxPerMm * 0.42);
+  const coreW = Math.max(0.5, cam.pxPerMm * 0.12);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  const seg = (a, b) => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); };
 
   for (let i = 0; i < upto && i < plan.length; i++) {
     const s = plan[i];
@@ -317,8 +331,12 @@ function drawStitches(ctx, cam, compiled, upto, view) {
     if (s.cmd === "stitch") {
       const col = colors[s.color] ? colors[s.color].color : "#333";
       if (penDown && last) {
-        ctx.strokeStyle = col;
-        ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(sp.x, sp.y); ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = shade(col, -0.28); ctx.lineWidth = bodyW; seg(last, sp); // edge/depth
+        ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.8, bodyW - 1.1); seg(last, sp); // body
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = shade(col, 0.45); ctx.lineWidth = coreW; seg(last, sp); // sheen core
+        ctx.globalAlpha = 1;
       }
       if (view.showPoints) {
         ctx.fillStyle = "rgba(0,0,0,0.55)";

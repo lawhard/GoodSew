@@ -49,9 +49,11 @@ spin. Everything is meant to feel like Word or an image markup tool.
   transform matrix (so transformed/flipped logos import correctly), with
   sub-paths/holes detected automatically, fitted to the hoop, and colored from
   their `fill` (`fill:none` → satin-border outline). All pieces are **grouped**
-  so the logo moves/selects as one; selecting it shows a **Logo colors** submenu
-  to recolor each thread used. Imported art moves, resizes, rotates and stitches
-  like anything else.
+  and start out all-selected. Click a single part on the canvas (or in the
+  Objects panel) to select just that layer and change its color or thread
+  pattern; Shift-click a range, or use **Select all**. With the whole logo
+  selected, a **Logo colors** submenu recolors each thread it uses. Imported art
+  moves, resizes, rotates and stitches like anything else.
 - **Thread-pattern picker** — per object, choose the texture from labelled
   preview thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**,
   **Tatami**, or **Cross-hatch** (a perpendicular two-pass grid).

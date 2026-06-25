@@ -169,5 +169,36 @@ console.log("\n=== Outline circle (fillMode:'outline', borderWidth:2) ===");
   ok(nearCenter === 0, `interior is empty — no stitches near center (${nearCenter})`);
 }
 
+// ===== 5. Wide FORCED satin → split into ≤7.5mm crossings (no monster stitch) =====
+console.log("\n=== Wide forced satin (split-satin) ===");
+{
+  const wide = buildShape("rect", { x: 0, y: 0, w: 40, h: 25 });
+  const subs = fillContours([wide], { spacing: 0.5, angle: 0, stitchLength: 3, underlay: false, stitchType: "satin" });
+  let maxGap = 0;
+  for (const s of subs) for (let i = 1; i < s.length; i++)
+    maxGap = Math.max(maxGap, Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y));
+  ok(maxGap <= 7.5, `no consecutive-stitch gap > 7.5mm (max ${maxGap.toFixed(2)})`);
+  ok(!hasBadCoord(subs), `no NaN/Infinity`);
+  ok(pointsOutside(subs, [wide]) === 0, `every stitch inside region`);
+
+  // Thin forced satin still rails-only (single crossing, no split).
+  const thin = buildShape("rect", { x: 0, y: 0, w: 3, h: 30 });
+  const ts = fillContours([thin], { spacing: 0.5, angle: 0, stitchLength: 3, underlay: false, stitchType: "satin" });
+  ok(Math.abs(avg(perRowCounts(ts)) - 2) < 0.1, `thin forced satin stays ~2/row (rails only)`);
+}
+
+// ===== 6. Outline pass adds an edge-tracing run on a SHAPE =====
+console.log("\n=== Outline pass on a shape ===");
+{
+  const circ = buildShape("ellipse", { x: 0, y: 0, w: 30, h: 30 });
+  const base = { spacing: 0.5, angle: 0, stitchLength: 3, underlay: false };
+  const traces = (subs) => subs.some((s) =>
+    s.length >= 8 && s.every((p) => distToContours(p, [circ]) <= 0.6));
+  const noO = generateForObject({ type: "fill", points: circ, contours: [circ], params: { ...base } });
+  const yesO = generateForObject({ type: "fill", points: circ, contours: [circ], params: { ...base, outline: true, outlineLen: 2 } });
+  ok(!traces(noO), `no outline run without params.outline`);
+  ok(traces(yesO), `outline run present with params.outline`);
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURE(S)`);
 process.exit(fails ? 1 : 0);

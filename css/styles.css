@@ -147,6 +147,9 @@ body[data-mode="stitch"] .mode-design { display: none !important; }
 }
 .panel { padding: 13px 15px; border-bottom: 1px solid var(--border); }
 .panel h3 { margin: 0 0 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.mini-btn { float: right; text-transform: none; letter-spacing: 0; font-size: 10.5px; color: var(--accent);
+  background: none; border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; cursor: pointer; }
+.mini-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
 .muted { color: var(--muted); font-weight: 400; }
 .dims { color: var(--muted); font-size: 11px; margin-top: 8px; line-height: 1.5; }
 

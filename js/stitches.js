@@ -263,10 +263,29 @@ export function fillContours(contours, params) {
     }
     // Satin rails: for each row push the two span ends, alternating which rail
     // leads so the zig-zag stays continuous row to row.
+    //
+    // Wide-satin guard: a single rail-to-rail crossing on a wide column can far
+    // exceed the machine's max stitch (12.1mm) and, even after the compiler
+    // splits it, a 40mm satin throw is bad embroidery (loose, snag-prone). When a
+    // crossing exceeds maxSatinThrow we keep it SATIN (honoring the user's manual
+    // "Satin" override rather than silently switching to tatami) but insert
+    // evenly-spaced intermediate penetrations ALONG the crossing — "split satin",
+    // exactly what a digitizer does for a wide column. The points still lie on the
+    // straight rail-to-rail line, so coverage and direction are unchanged; each
+    // resulting stitch is ≤ maxSatinThrow.
+    const maxSatinThrow = 7;
     let rail = [];
     let prev = null;
     const flush = () => { if (rail.length >= 2) out.push(rail); rail = []; prev = null; };
     let lead = 0; // 0 → start at x0, 1 → start at x1
+    // Push a→b, subdividing if the crossing is too long for a clean satin stitch.
+    const pushCrossing = (a, b) => {
+      const d = Math.abs(b.x - a.x);
+      const n = Math.max(1, Math.ceil(d / maxSatinThrow));
+      for (let k = 1; k <= n; k++) {
+        rail.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y });
+      }
+    };
     for (const { ri, si } of order) {
       const S = span(ri, si);
       const y = rowYs[ri];
@@ -275,7 +294,8 @@ export function fillContours(contours, params) {
       // Break the column if the connector from the previous rail point would
       // leave the region (a counter or a disconnected continuation).
       if (prev && !segmentInContours(prev, a, rot)) flush();
-      rail.push(a, b);
+      rail.push(a);
+      pushCrossing(a, b);
       prev = b;
       lead ^= 1;
     }
@@ -413,14 +433,11 @@ export function generateText(obj) {
     const moved = contours.map(shift);
     // Fill each glyph with hole-aware tatami + a LIGHT underlay (outer edge run
     // only; no perpendicular tatami) so small lettering stays crisp and counters
-    // stay open.
+    // stay open. The OUTLINE pass (params.outline) is handled inside
+    // fillWithUnderlay now — hole-aware (counters not ringed) and inset just
+    // inside the edge — so it is shared by text, shapes, and SVG fills.
     for (const f of fillWithUnderlay(moved, obj.params, { light: true })) {
       if (f.length) subs.push(f);
-    }
-    if (obj.params.outline) {
-      for (const c of moved) {
-        if (c.length >= 2) subs.push(edgeWalk(c, obj.params.outlineLen || 2.0));
-      }
     }
   }
   return subs;
@@ -511,6 +528,21 @@ function fillWithUnderlay(contours, params, opts = {}) {
   } else {
     for (const f of fillContours(valid, { ...params, spacing: topSpacing, stitchLength: len, angle: topAngle })) {
       if (f.length) subs.push(f);
+    }
+  }
+
+  // Optional OUTLINE pass (params.outline): a crisp corner-preserving running
+  // stitch traced AROUND THE OUTER CONTOURS, on top of the fill — the same effect
+  // generateText gives lettering. Hole-aware via classifyHoles so counters are
+  // never ringed shut (an 'O'/SVG counter stays open). Pulled just inside by the
+  // pull-comp inset so the outline sits on the edge, not over it.
+  if (params.outline) {
+    const isHole = classifyHoles(valid);
+    const olen = params.outlineLen || 2.0;
+    for (let i = 0; i < valid.length; i++) {
+      if (isHole[i]) continue;
+      const o = edgeWalk(valid[i], olen, inset, valid);
+      if (o.length) subs.push(o);
     }
   }
   return subs;

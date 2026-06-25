@@ -4,30 +4,30 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSew — SE700 Embroidery Designer</title>
-  <link rel="stylesheet" href="css/styles.css?v=0.5.0" />
+  <link rel="stylesheet" href="css/styles.css?v=0.5.1" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.5.0",
-      "./js/hoop.js": "./js/hoop.js?v=0.5.0",
-      "./js/threads.js": "./js/threads.js?v=0.5.0",
-      "./js/compiler.js": "./js/compiler.js?v=0.5.0",
-      "./js/stats.js": "./js/stats.js?v=0.5.0",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.5.0",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.5.0",
-      "./js/render.js": "./js/render.js?v=0.5.0",
-      "./js/simulator.js": "./js/simulator.js?v=0.5.0",
-      "./js/geometry.js": "./js/geometry.js?v=0.5.0",
-      "./js/shapes.js": "./js/shapes.js?v=0.5.0",
-      "./js/fonts.js": "./js/fonts.js?v=0.5.0",
-      "./js/units.js": "./js/units.js?v=0.5.0",
-      "./js/preview.js": "./js/preview.js?v=0.5.0",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.5.0",
-      "./js/qa.js": "./js/qa.js?v=0.5.0",
-      "./js/stitches.js": "./js/stitches.js?v=0.5.0"
+      "./js/state.js": "./js/state.js?v=0.5.1",
+      "./js/hoop.js": "./js/hoop.js?v=0.5.1",
+      "./js/threads.js": "./js/threads.js?v=0.5.1",
+      "./js/compiler.js": "./js/compiler.js?v=0.5.1",
+      "./js/stats.js": "./js/stats.js?v=0.5.1",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.5.1",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.5.1",
+      "./js/render.js": "./js/render.js?v=0.5.1",
+      "./js/simulator.js": "./js/simulator.js?v=0.5.1",
+      "./js/geometry.js": "./js/geometry.js?v=0.5.1",
+      "./js/shapes.js": "./js/shapes.js?v=0.5.1",
+      "./js/fonts.js": "./js/fonts.js?v=0.5.1",
+      "./js/units.js": "./js/units.js?v=0.5.1",
+      "./js/preview.js": "./js/preview.js?v=0.5.1",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.5.1",
+      "./js/qa.js": "./js/qa.js?v=0.5.1",
+      "./js/stitches.js": "./js/stitches.js?v=0.5.1"
     }
   }
   </script>
@@ -113,7 +113,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.0</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.1</div>
     </main>
 
     <!-- Right -->
@@ -129,7 +129,9 @@
       </section>
 
       <section class="panel">
-        <h3>Objects <span id="object-count" class="muted"></span></h3>
+        <h3>Objects <span id="object-count" class="muted"></span>
+          <button id="btn-select-all" class="mini-btn" title="Select every layer">Select all</button>
+        </h3>
         <ul id="object-list" class="object-list"></ul>
       </section>
 
@@ -224,6 +226,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.5.0"></script>
+  <script type="module" src="js/app.js?v=0.5.1"></script>
 </body>
 </html>

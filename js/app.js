@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.1"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -484,10 +484,16 @@ canvas.addEventListener("mousedown", (e) => {
   if (gh) { drag = { mode: "guide", guide: gh }; return; }
 
   if (state.mode === "stitch") {
-    // stitch view: click an object to fine-tune it; drag empty space to pan.
+    // stitch view: click a layer to fine-tune it (shift adds); drag empty to pan.
     const hit = hitTestObject(world);
-    if (hit) { setSel([hit.id]); }
-    else { setSel([]); drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY }; }
+    if (hit) {
+      if (e.shiftKey) {
+        const ids = state.selectedIds.slice();
+        const i = ids.indexOf(hit.id);
+        if (i >= 0) ids.splice(i, 1); else ids.push(hit.id);
+        setSel(ids);
+      } else setSel([hit.id]);
+    } else { setSel([]); drag = { mode: "pan", startX: e.clientX, startY: e.clientY, panX: cam.panX, panY: cam.panY }; }
     refreshProps(); refreshObjectList(); needsRender = true;
     return;
   }
@@ -521,17 +527,17 @@ canvas.addEventListener("mousedown", (e) => {
 
   const hit = hitTestObject(world);
   if (hit) {
+    // Click selects the INDIVIDUAL layer under the cursor (even within a logo
+    // group), so you can recolor / re-pattern one piece. Shift-click adds/
+    // removes. Clicking an already-selected item keeps the multi-selection so
+    // the whole set can be dragged together.
     if (e.shiftKey) {
-      // toggle this object in/out of the selection
       const ids = state.selectedIds.slice();
       const i = ids.indexOf(hit.id);
       if (i >= 0) ids.splice(i, 1); else ids.push(hit.id);
       setSel(ids);
     } else if (state.selectedIds.includes(hit.id)) {
-      // already selected → keep the set (so a group can be dragged), set primary
       setSel([...state.selectedIds.filter((id) => id !== hit.id), hit.id]);
-    } else if (hit.groupId != null) {
-      setSel(state.objects.filter((o) => o.groupId === hit.groupId && o.visible).map((o) => o.id));
     } else {
       setSel([hit.id]);
     }
@@ -887,12 +893,18 @@ function refreshObjectList() {
     del.onclick = (e) => { e.stopPropagation(); setSel([obj.id]); deleteSelected(); };
     li.append(handle, icon, main, vis, del);
     li.onclick = (e) => {
-      if (e.shiftKey) {
+      const order = state.objects.map((o) => o.id);
+      if (e.shiftKey && selAnchorId != null && order.includes(selAnchorId)) {
+        // range select: every layer between the anchor and this one
+        const a = order.indexOf(selAnchorId), b = order.indexOf(obj.id);
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSel(order.slice(lo, hi + 1));
+      } else if (e.ctrlKey || e.metaKey) {
         const ids = state.selectedIds.slice();
         const i = ids.indexOf(obj.id);
         if (i >= 0) ids.splice(i, 1); else ids.push(obj.id);
-        setSel(ids);
-      } else { setSel([obj.id]); }
+        setSel(ids); selAnchorId = obj.id;
+      } else { setSel([obj.id]); selAnchorId = obj.id; }
       refreshProps(); refreshObjectList(); needsRender = true;
     };
     // drag-and-drop layer reordering
@@ -920,6 +932,11 @@ function refreshObjectList() {
 }
 
 let dragLayerId = null;
+let selAnchorId = null; // anchor for shift-range selection in the Objects list
+function selectAllObjects() {
+  setSel(state.objects.filter((o) => o.visible).map((o) => o.id));
+  refreshProps(); refreshObjectList(); needsRender = true;
+}
 // Move a layer (by id) to just above/below the target id, in the displayed
 // (reversed) order, then sync the draw-order array.
 function moveLayer(draggedId, targetId, after) {
@@ -1253,6 +1270,7 @@ $("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" 
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
 $("btn-optimize").onclick = optimizeOrder;
+$("btn-select-all").onclick = selectAllObjects;
 
 $("btn-new").onclick = () => {
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
@@ -1412,7 +1430,7 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText, importSVG, optimizeOrder, moveLayer,
+    addText, addShape, bakeText, importSVG, optimizeOrder, moveLayer, selectAllObjects,
     quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
