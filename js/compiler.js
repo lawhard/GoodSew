@@ -104,8 +104,35 @@ export function compile() {
     push(prev.x, prev.y, "end", Math.max(0, colors.length - 1));
   }
 
-  const stitchPts = plan.filter((s) => s.cmd === "stitch");
+  const clean = removeShortStitches(plan);
+
+  const stitchPts = clean.filter((s) => s.cmd === "stitch");
   const bounds = stitchPts.length ? bbox(stitchPts) : { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0 };
 
-  return { plan, colors, bounds };
+  return { plan: clean, colors, bounds };
+}
+
+// Short-stitch removal with corner preservation: within a continuous run of
+// stitches, drop a penetration that sits < MIN mm from the previous kept one AND
+// nearly on the line to the next (a redundant micro-stitch that just risks
+// thread breaks). Corners (a real direction change) and the first/last stitch of
+// a run are always kept, so shapes/edges — and the bounding box — are preserved.
+function removeShortStitches(plan, MIN = 0.4) {
+  const out = [];
+  for (let i = 0; i < plan.length; i++) {
+    const s = plan[i];
+    if (s.cmd !== "stitch") { out.push(s); continue; }
+    const A = out.length ? out[out.length - 1] : null;
+    const C = plan[i + 1];
+    if (A && A.cmd === "stitch" && C && C.cmd === "stitch") {
+      const dAP = Math.hypot(s.x - A.x, s.y - A.y);
+      if (dAP < MIN) {
+        const vx = C.x - A.x, vy = C.y - A.y, L = Math.hypot(vx, vy) || 1;
+        const perp = Math.abs((s.x - A.x) * vy - (s.y - A.y) * vx) / L;
+        if (perp < MIN) continue; // redundant near-collinear micro-stitch → drop
+      }
+    }
+    out.push(s);
+  }
+  return out;
 }

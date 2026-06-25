@@ -93,6 +93,15 @@ and an optional **outline pass**, then simulate and export.
 - Select / move / reshape objects, per-object visibility, and a layer list that
   defines stitch order.
 
+### Quality check & optimization
+After rendering, a **Quality Check** panel flags issues before you sew —
+field overflow, very short stitches (thread-break risk), over-long stitches,
+high jump/trim counts, and overlapping (double-stitched) objects. The compiler
+also runs **short-stitch removal** (drops redundant near-collinear
+micro-stitches while preserving corners) so output is clean by default, and
+**Optimize order** reorders objects to group same colors (fewer thread changes)
+and shorten travel between them.
+
 ### Machine-accurate simulation
 The design compiles to an ordered **stitch plan** that models exactly what the
 machine does. The simulator plays it back so you can verify before you stitch:

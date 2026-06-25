@@ -19,8 +19,9 @@ import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
+import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.4.7"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.8"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -71,9 +72,65 @@ function recompile() {
   sim.setPlan(compiled.plan);
   $("sim-scrub").max = compiled.plan.length;
   refreshStats();
+  refreshQuality();
   needsRender = true;
 }
 function ensureCompiled() { if (state.planDirty || !compiled) recompile(); }
+
+// ----------------------------------------------------------- quality check
+function refreshQuality() {
+  const host = $("quality-list");
+  if (!host || !compiled) return;
+  const { warnings } = analyzeQuality(compiled, getHoop(state.hoopId));
+  const list = warnings.slice();
+  // Overlap (double-stitched) detection over visible objects' boxes.
+  const vis = state.objects.filter((o) => o.visible);
+  let overlaps = 0;
+  for (let i = 0; i < vis.length; i++) for (let j = i + 1; j < vis.length; j++) {
+    const a = getObjBox(vis[i]), b = getObjBox(vis[j]);
+    const ox = Math.min(a.cx + a.w / 2, b.cx + b.w / 2) - Math.max(a.cx - a.w / 2, b.cx - b.w / 2);
+    const oy = Math.min(a.cy + a.h / 2, b.cy + b.h / 2) - Math.max(a.cy - a.h / 2, b.cy - b.h / 2);
+    if (ox > 1 && oy > 1) overlaps++;
+  }
+  if (overlaps > 0) list.push({ sev: "info", msg: `${overlaps} overlapping object pair${overlaps === 1 ? "" : "s"} — areas may be double-stitched` });
+
+  host.innerHTML = "";
+  if (!list.length) { host.className = "quality-list ok"; host.textContent = "✓ No issues found."; return; }
+  host.className = "quality-list";
+  for (const w of list) {
+    const d = document.createElement("div");
+    d.className = "qa-item qa-" + w.sev;
+    d.textContent = (w.sev === "error" ? "● " : w.sev === "warn" ? "▲ " : "• ") + w.msg;
+    host.appendChild(d);
+  }
+}
+
+// Reorder objects to group same colors (fewer thread changes) and nearest-
+// neighbor within each color (less travel), reducing jumps/trims.
+function optimizeOrder() {
+  if (state.objects.length < 3) { toast("Nothing to optimize."); return; }
+  const colorOrder = [], groups = new Map();
+  for (const o of state.objects) {
+    if (!groups.has(o.color)) { groups.set(o.color, []); colorOrder.push(o.color); }
+    groups.get(o.color).push(o);
+  }
+  const rep = (o) => { const b = getObjBox(o); return { x: b.cx, y: b.cy }; };
+  const out = [];
+  let cursor = { x: 0, y: 0 };
+  for (const col of colorOrder) {
+    const pool = groups.get(col).slice();
+    while (pool.length) {
+      let bi = 0, bd = Infinity;
+      for (let i = 0; i < pool.length; i++) { const d = dist(cursor, rep(pool[i])); if (d < bd) { bd = d; bi = i; } }
+      const o = pool.splice(bi, 1)[0];
+      out.push(o); cursor = rep(o);
+    }
+  }
+  state.objects = out;
+  markDirty(); recompile(); commit();
+  refreshObjectList(); needsRender = true;
+  toast("Optimized stitch order");
+}
 
 function refreshStats() {
   if (!compiled) return;
@@ -1081,6 +1138,7 @@ $("btn-back").onclick = () => setMode("design");
 $("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" : "light"; document.body.dataset.theme = state.theme; needsRender = true; };
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
+$("btn-optimize").onclick = optimizeOrder;
 
 $("btn-new").onclick = () => {
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
@@ -1255,7 +1313,8 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText, importSVG,
+    addText, addShape, bakeText, importSVG, optimizeOrder,
+    quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
     setSel, selectedObjects, copySelection, pasteClipboard, duplicateSelection, groupSelection, ungroupSelection, alignSelected, distributeSelected,
