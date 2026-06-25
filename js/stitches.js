@@ -498,14 +498,20 @@ function fillWithUnderlay(contours, params, opts = {}) {
     }
   }
 
-  // Top tatami fill — apply the smart defaults so the look is good untuned.
-  for (const f of fillContours(valid, {
-    ...params,
-    spacing: topSpacing,
-    stitchLength: Math.max(1, params.stitchLength ?? 3.0),
-    angle: topAngle,
-  })) {
-    if (f.length) subs.push(f);
+  // Top fill. Cross-hatch = two perpendicular tatami passes forming a grid;
+  // otherwise a single tatami (or satin, decided per-component in fillContours).
+  const len = Math.max(1, params.stitchLength ?? 3.0);
+  if (params.crosshatch) {
+    const gap = topSpacing * 1.7; // each pass sparser; the two together look right
+    for (const ang of [topAngle, topAngle + 90]) {
+      for (const f of fillContours(valid, { ...params, stitchType: "fill", crosshatch: false, spacing: gap, stitchLength: len, angle: ang })) {
+        if (f.length) subs.push(f);
+      }
+    }
+  } else {
+    for (const f of fillContours(valid, { ...params, spacing: topSpacing, stitchLength: len, angle: topAngle })) {
+      if (f.length) subs.push(f);
+    }
   }
   return subs;
 }

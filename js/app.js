@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.4.9"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -1122,22 +1122,28 @@ function refreshStitchSettings() {
   const p = obj.params;
   const recompileLive = () => { markDirty(); recompile(); needsRender = true; };
 
-  // --- Texture (stitch type) picker with little pattern thumbnails ---
-  const sub = document.createElement("div"); sub.className = "prop-sublabel"; sub.textContent = "Texture";
+  // --- Thread-pattern (texture) picker with little pattern thumbnails ---
+  const sub = document.createElement("div"); sub.className = "prop-sublabel"; sub.textContent = "Thread pattern";
   host.appendChild(sub);
   const tex = document.createElement("div"); tex.className = "texture-grid";
-  const cur = p.stitchType || "auto";
-  [["auto", "Auto"], ["satin", "Satin"], ["fill", "Fill"]].forEach(([val, label]) => {
+  const TEXTURES = [
+    { id: "auto", label: "Auto", title: "Satin for narrow areas, fill for wide", set: { stitchType: "auto", crosshatch: false } },
+    { id: "satin", label: "Satin", title: "Smooth side-to-side columns", set: { stitchType: "satin", crosshatch: false } },
+    { id: "tatami", label: "Tatami", title: "Flat parallel-row fill", set: { stitchType: "fill", crosshatch: false } },
+    { id: "crosshatch", label: "Cross-hatch", title: "Two perpendicular fill passes (grid)", set: { stitchType: "fill", crosshatch: true } },
+  ];
+  const cur = p.crosshatch ? "crosshatch" : (p.stitchType === "satin" ? "satin" : p.stitchType === "fill" ? "tatami" : "auto");
+  for (const t of TEXTURES) {
     const cell = document.createElement("button");
-    cell.className = "texture-cell" + (cur === val ? " active" : "");
-    cell.title = val === "auto" ? "Pick automatically by width" : val === "satin" ? "Smooth satin columns" : "Tatami fill";
+    cell.className = "texture-cell" + (cur === t.id ? " active" : "");
+    cell.title = t.title;
     const cv = document.createElement("canvas"); cv.width = 96; cv.height = 40;
-    drawTextureThumb(cv, val);
-    const cap = document.createElement("span"); cap.textContent = label;
+    drawTextureThumb(cv, t.id);
+    const cap = document.createElement("span"); cap.textContent = t.label;
     cell.append(cv, cap);
-    cell.onclick = () => { p.stitchType = val; recompileLive(); commit(); refreshStitchSettings(); };
+    cell.onclick = () => { Object.assign(p, t.set); recompileLive(); commit(); refreshStitchSettings(); };
     tex.appendChild(cell);
-  });
+  }
   host.appendChild(tex);
 
   row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { p.spacing = v; recompileLive(); }));
@@ -1179,9 +1185,17 @@ function drawTextureThumb(cv, kind) {
     for (let y = pad + 2; y <= H - pad; y += 5) { g.moveTo(x0, y); g.lineTo(x1, y); }
     g.stroke();
   };
+  const cross = (x0, x1) => { // diagonal grid
+    g.beginPath();
+    for (let d = -H; d < W; d += 6) { g.moveTo(x0 + d, pad); g.lineTo(x0 + d + H, H - pad); g.moveTo(x0 + d + H, pad); g.lineTo(x0 + d, H - pad); }
+    g.stroke();
+  };
+  g.save(); g.beginPath(); g.rect(pad, pad, W - 2 * pad, H - 2 * pad); g.clip();
   if (kind === "satin") satin(pad, W - pad);
-  else if (kind === "fill") fill(pad, W - pad);
+  else if (kind === "tatami") fill(pad, W - pad);
+  else if (kind === "crosshatch") cross(pad, W - pad);
   else { satin(pad, W / 2 - 3); fill(W / 2 + 3, W - pad); } // auto = both
+  g.restore();
 }
 
 // ----------------------------------------------------------- font gallery

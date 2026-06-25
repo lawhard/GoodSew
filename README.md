@@ -52,8 +52,9 @@ spin. Everything is meant to feel like Word or an image markup tool.
   so the logo moves/selects as one; selecting it shows a **Logo colors** submenu
   to recolor each thread used. Imported art moves, resizes, rotates and stitches
   like anything else.
-- **Texture picker** — per object, choose the stitch texture from labelled
-  thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**, or **Fill**.
+- **Thread-pattern picker** — per object, choose the texture from labelled
+  preview thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**,
+  **Tatami**, or **Cross-hatch** (a perpendicular two-pass grid).
 
 ### ② Render phase — stitch it
 Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a
