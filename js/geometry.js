@@ -167,6 +167,40 @@ export function offsetContourInward(poly, d, region) {
   return out;
 }
 
+// Offset a closed polygon by `d` mm along each vertex's mitered normal, either
+// INWARD (outward=false) or OUTWARD (outward=true). Direction is resolved
+// empirically by probing the region (even-odd) so it works at concave and convex
+// vertices alike. Used to build the two rails of a satin BORDER (a band centered
+// on the contour outline): inward rail + outward rail, zig-zagged between.
+export function offsetContourSigned(poly, d, region, outward = false) {
+  if (poly.length < 3 || d <= 0) return poly.slice();
+  const reg = region || [poly];
+  const out = [];
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const prev = poly[(i - 1 + n) % n], cur = poly[i], next = poly[(i + 1) % n];
+    const e1 = norm(sub(cur, prev));
+    const e2 = norm(sub(next, cur));
+    const nrm = (e) => ({ x: -e.y, y: e.x });
+    const n1 = nrm(e1), n2 = nrm(e2);
+    let mx = n1.x + n2.x, my = n1.y + n2.y;
+    const ml = Math.hypot(mx, my);
+    if (ml < 1e-6) { mx = n1.x; my = n1.y; } else { mx /= ml; my /= ml; }
+    const cosHalf = Math.max(0.2, n1.x * mx + n1.y * my);
+    const step = Math.min(d / cosHalf, d * 3);
+    const probe = 1e-3;
+    // inSign points the bisector toward the interior; flip it for the outward rail.
+    let inSign =
+      pointInContours({ x: cur.x + mx * probe, y: cur.y + my * probe }, reg) ? 1
+      : pointInContours({ x: cur.x - mx * probe, y: cur.y - my * probe }, reg) ? -1
+      : 0;
+    if (inSign === 0) inSign = 1; // on a thin spike — pick a side rather than stall
+    const sign = (outward ? -1 : 1) * inSign;
+    out.push({ x: cur.x + sign * mx * step, y: cur.y + sign * my * step });
+  }
+  return out;
+}
+
 // Classify each contour as OUTER or HOLE by even-odd nesting. A contour is a
 // HOLE when a point on its boundary lies inside an ODD number of the OTHER
 // contours (counters/holes nest one level deep inside an outer ring). Glyph

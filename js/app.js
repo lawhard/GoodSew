@@ -19,7 +19,7 @@ import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 
-const APP_VERSION = "0.4.5"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.4.6"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");

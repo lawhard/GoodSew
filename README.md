@@ -51,6 +51,12 @@ sensible, good-looking **default tatami fill** — no tuning required. From ther
 you can fine-tune each object's **density, stitch length, fill angle, underlay**
 and an optional **outline pass**, then simulate and export.
 
+- **Automatic stitch type** — each region is measured and stitched the right
+  way with no manual choice: narrow regions (letter stems, thin shapes, the ring
+  of an "O", ≤ ~6 mm — adjustable) become **satin** (zig-zag rail-to-rail with a
+  center-run underlay), wider regions become **tatami fill**. This is what makes
+  small lettering legible. Shapes set to **Outline** get a **satin border** band
+  around the contour instead of a filled interior.
 - **Smart tatami fill** — a connected-component serpentine: spans are
   linked across rows so the fill is sewn as one continuous path whose
   travel stays **inside** the shape, so concave regions (a heart's notch,

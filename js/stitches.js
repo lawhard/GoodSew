@@ -5,7 +5,8 @@
 import {
   resample, pathLength, sub, add, scale, norm, perp, dist, bbox,
   rotatePoint, sampleAt, contoursScanline, contoursBBox,
-  segmentInContours, classifyHoles, offsetContourInward,
+  segmentInContours, classifyHoles, offsetContourInward, offsetContourSigned,
+  pointInContours,
 } from "./geometry.js";
 
 // --- Running stitch: evenly spaced stitches along the polyline. ---
@@ -165,35 +166,130 @@ export function fillContours(contours, params) {
     }
   }
 
-  // --- Walk each connected component as a continuous serpentine subpath. ---
-  const subs = [];
+  // --- Walk each connected component, collecting its spans in serpentine order.
+  // We first gather the ordered (ri,si,dir) visit list for one CONNECTED COMPONENT
+  // (one seed's reachable closure), THEN decide how to stitch it: a NARROW
+  // component (median cross width ≤ satin threshold) is emitted as a rail-to-rail
+  // SATIN column (no interior penetrations) with an optional center-run underlay;
+  // a WIDE component keeps the existing tatami serpentine. Auto stitch-type
+  // selection happens per component, so a thin letter stem and a wide blob in the
+  // same object each get the right treatment.
   const visited = new Set();
-  // Stitch a span in travel direction `dir` (>0 left→right) and append, opening a
-  // new subpath if the interior connector from the previous point fails.
-  let cur = [];
-  let prev = null;
-  const flush = () => { if (cur.length >= 2) subs.push(cur); cur = []; prev = null; };
-  const emit = (ri, si, dir) => {
-    const S = span(ri, si);
-    const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
-    if (prev && !segmentInContours(prev, pts[0], rot)) flush();
-    cur.push(...pts);
-    prev = pts[pts.length - 1];
-    visited.add(id(ri, si));
-  };
-  // Pick the next unvisited span to continue to: prefer a neighbor of the current
-  // span (keeps the path local & interior), else fall back to scanning.
   const reachableNeighbor = (ri, si) => {
     const ns = adj.get(id(ri, si)) || [];
     let best = null;
     for (const n of ns) {
       if (visited.has(id(n.ri, n.si))) continue;
-      // Prefer going DOWN, then by proximity, to keep a tidy vertical snake.
       if (!best || n.ri > best.ri) best = n;
     }
     return best;
   };
 
+  // Build the ordered visit list for the component seeded at (sri,ssi). Mirrors
+  // the original serpentine traversal (down a vertical chain, then to the nearest
+  // interior-reachable unvisited span). Returns [{ ri, si, dir }].
+  const walkComponent = (sri, ssi) => {
+    const order = [];
+    let cur_ri = sri, cur_si = ssi, dir = 1;
+    let prevMid = null;
+    while (cur_ri !== -1) {
+      order.push({ ri: cur_ri, si: cur_si, dir });
+      visited.add(id(cur_ri, cur_si));
+      const S = span(cur_ri, cur_si);
+      prevMid = { x: (S.x0 + S.x1) / 2, y: rowYs[cur_ri] };
+      dir = -dir;
+      let next = reachableNeighbor(cur_ri, cur_si);
+      if (!next) {
+        let bestD = Infinity;
+        for (let ri = 0; ri < rows.length; ri++) {
+          for (let si = 0; si < rows[ri].length; si++) {
+            if (visited.has(id(ri, si))) continue;
+            const T = span(ri, si);
+            const cx = (T.x0 + T.x1) / 2;
+            const here = { x: cx, y: rowYs[ri] };
+            const d = dist(prevMid, here);
+            if (d < bestD && segmentInContours(prevMid, here, rot)) { bestD = d; next = { ri, si }; }
+          }
+        }
+      }
+      if (next) { cur_ri = next.ri; cur_si = next.si; } else cur_ri = -1;
+    }
+    return order;
+  };
+
+  // Satin auto-selection thresholds (mm). `satinMaxWidth` = widest column still
+  // treated as satin; below `satinMinWidth` a feature is too thin to satin
+  // (a single rail), so it stays tatami (it will just be a near-degenerate row).
+  const satinMax = params.satinMaxWidth ?? 6;
+  const satinMin = 0.6;
+  const wantUnderlay = params.underlay !== false;
+
+  // Emit a WIDE component as the tatami serpentine (original behavior). Splits a
+  // new subpath whenever the interior connector to the next span fails.
+  const emitTatami = (order, out) => {
+    let cur = [];
+    let prev = null;
+    const flush = () => { if (cur.length >= 2) out.push(cur); cur = []; prev = null; };
+    for (const { ri, si, dir } of order) {
+      const S = span(ri, si);
+      const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
+      if (prev && !segmentInContours(prev, pts[0], rot)) flush();
+      cur.push(...pts);
+      prev = pts[pts.length - 1];
+    }
+    flush();
+  };
+
+  // Emit a NARROW component as a SATIN column: alternate rails so every stitch
+  // crosses the column, no interior points. Density along the column is the row
+  // spacing. A center-run underlay (midpoints per row) is pushed first.
+  const emitSatin = (order, out) => {
+    if (wantUnderlay) {
+      const centerRun = [];
+      let prev = null;
+      let run = [];
+      for (const { ri, si } of order) {
+        const S = span(ri, si);
+        const p = { x: (S.x0 + S.x1) / 2, y: rowYs[ri] };
+        if (prev && !segmentInContours(prev, p, rot)) {
+          if (run.length >= 2) centerRun.push(run);
+          run = [];
+        }
+        run.push(p);
+        prev = p;
+      }
+      if (run.length >= 2) centerRun.push(run);
+      for (const r of centerRun) out.push(r);
+    }
+    // Satin rails: for each row push the two span ends, alternating which rail
+    // leads so the zig-zag stays continuous row to row.
+    let rail = [];
+    let prev = null;
+    const flush = () => { if (rail.length >= 2) out.push(rail); rail = []; prev = null; };
+    let lead = 0; // 0 → start at x0, 1 → start at x1
+    for (const { ri, si } of order) {
+      const S = span(ri, si);
+      const y = rowYs[ri];
+      const a = { x: lead === 0 ? S.x0 : S.x1, y };
+      const b = { x: lead === 0 ? S.x1 : S.x0, y };
+      // Break the column if the connector from the previous rail point would
+      // leave the region (a counter or a disconnected continuation).
+      if (prev && !segmentInContours(prev, a, rot)) flush();
+      rail.push(a, b);
+      prev = b;
+      lead ^= 1;
+    }
+    flush();
+  };
+
+  // Median cross-fill width of a component = median span length over its spans.
+  const componentWidth = (order) => {
+    const ws = order.map(({ ri, si }) => { const S = span(ri, si); return S.x1 - S.x0; });
+    ws.sort((p, q) => p - q);
+    return ws[Math.floor(ws.length / 2)];
+  };
+
+  const subs = [];
   // Seed order: spans top-to-bottom, left-to-right.
   const seeds = [];
   for (let ri = 0; ri < rows.length; ri++)
@@ -202,33 +298,11 @@ export function fillContours(contours, params) {
 
   for (const seed of seeds) {
     if (visited.has(id(seed.ri, seed.si))) continue;
-    flush(); // new island / unreachable continuation → new subpath
-    let cur_ri = seed.ri, cur_si = seed.si, dir = 1;
-    while (cur_ri !== -1) {
-      emit(cur_ri, cur_si, dir);
-      dir = -dir;
-      // Continue along adjacency to an unvisited reachable neighbor.
-      let next = reachableNeighbor(cur_ri, cur_si);
-      if (!next) {
-        // Dead end in the local chain: hop to the nearest unvisited span in the
-        // SAME component still reachable by an interior connector from here.
-        next = null;
-        let bestD = Infinity;
-        for (let ri = 0; ri < rows.length; ri++) {
-          for (let si = 0; si < rows[ri].length; si++) {
-            if (visited.has(id(ri, si))) continue;
-            const S = span(ri, si);
-            const cx = (S.x0 + S.x1) / 2;
-            const here = { x: cx, y: rowYs[ri] };
-            const d = dist(prev, here);
-            if (d < bestD && segmentInContours(prev, here, rot)) { bestD = d; next = { ri, si }; }
-          }
-        }
-      }
-      if (next) { cur_ri = next.ri; cur_si = next.si; } else cur_ri = -1;
-    }
+    const order = walkComponent(seed.ri, seed.si);
+    const w = componentWidth(order);
+    if (w <= satinMax && w >= satinMin) emitSatin(order, subs);
+    else emitTatami(order, subs);
   }
-  flush();
 
   // Rotate every subpath back into design space.
   return subs.map((s) => s.map((p) => rotatePoint(p, center, angle)));
@@ -262,6 +336,62 @@ function edgeWalk(contour, spacing, inset = 0, region = null) {
     for (let k = 1; k < seg.length; k++) out.push(seg[k]);
   }
   return out;
+}
+
+// Satin BORDER along a set of contours (OUTLINE mode): instead of filling the
+// interior, lay a band of width `borderWidth` mm centered on each contour
+// outline. Two rails are built by offsetting the contour inward and outward by
+// half the width; a zig-zag alternates between them, spaced `spacing` mm along
+// the outline. The interior is never filled and counters are never satined
+// across (each contour is bordered independently). If a rail offset degenerates
+// (a contour too small / spiky to give two clean rails) we fall back to a clean
+// corner-preserving running stitch (edgeWalk) along that contour.
+//
+// Returns an array of subpaths (one per contour, plus possible splits).
+function generateBorder(contours, params) {
+  const valid = contours.filter((c) => c.length >= 3);
+  if (valid.length === 0) return [];
+  const width = Math.max(0.5, params.borderWidth ?? 2);
+  const half = width / 2;
+  const spacing = Math.max(0.3, params.spacing ?? 0.4);
+  const subs = [];
+
+  for (const contour of valid) {
+    // Resample the outline so rail samples are evenly spaced and corners kept.
+    // `resample` of a closed loop repeats the seam vertex (start == end), which
+    // gives a zero-length edge and a degenerate miter there — drop the trailing
+    // duplicate so the offset treats the loop cleanly.
+    const closed = [...contour, contour[0]];
+    let outline = resample(closed, spacing);
+    if (outline.length > 1) {
+      const a = outline[0], b = outline[outline.length - 1];
+      if (Math.hypot(a.x - b.x, a.y - b.y) < 1e-6) outline = outline.slice(0, -1);
+    }
+    if (outline.length < 3) { subs.push(edgeWalk(contour, spacing)); continue; }
+
+    const inner = offsetContourSigned(outline, half, valid, false);
+    const outer = offsetContourSigned(outline, half, valid, true);
+
+    // Sanity: both rails must be finite and the same length as the outline.
+    let bad = inner.length !== outline.length || outer.length !== outline.length;
+    if (!bad) {
+      for (let i = 0; i < outline.length && !bad; i++) {
+        if (!Number.isFinite(inner[i].x) || !Number.isFinite(inner[i].y) ||
+            !Number.isFinite(outer[i].x) || !Number.isFinite(outer[i].y)) bad = true;
+      }
+    }
+    if (bad) { subs.push(edgeWalk(contour, spacing)); continue; }
+
+    // Zig-zag between the rails: outer, inner, outer, ... so each stitch crosses
+    // the band. Both points sit within ~half mm of the outline by construction.
+    const rail = [];
+    for (let i = 0; i < outline.length; i++) {
+      if (i % 2 === 0) { rail.push(outer[i], inner[i]); }
+      else { rail.push(inner[i], outer[i]); }
+    }
+    if (rail.length >= 2) subs.push(rail);
+  }
+  return subs;
 }
 
 // Generate stitches for a text object from its cached glyph contours
@@ -304,6 +434,10 @@ export function generateForObject(obj) {
     }
     case "fill": {
       const contours = (obj.contours && obj.contours.length) ? obj.contours : [obj.points];
+      // OUTLINE mode: stitch a satin band along the contour outline, never fill
+      // the interior. Hole-aware — each contour (counter included) is bordered
+      // independently, so an outline 'O' gets two rings and an open center.
+      if (obj.params.fillMode === "outline") return generateBorder(contours, obj.params);
       return fillWithUnderlay(contours, obj.params);
     }
     case "text":    return generateText(obj);
@@ -348,6 +482,7 @@ function fillWithUnderlay(contours, params, opts = {}) {
     if (!light) {
       for (const f of fillContours(valid, {
         ...params,
+        underlay: false, // this pass IS underlay — no nested satin center-run
         spacing: Math.max(1.8, topSpacing * 4),
         stitchLength: Math.max(2.5, params.stitchLength ?? 3.0),
         angle: topAngle + 90,
