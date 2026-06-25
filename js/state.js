@@ -26,11 +26,14 @@ export function defaultParams(type) {
       return { width: 4, density: 0.4, pull: 0.2, underlay: true };
     case "fill":
       // outline = add a tidy running edge pass on top of the fill
-      return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true, outline: false };
+      // satinMaxWidth = regions narrower than this auto-stitch as satin
+      // borderWidth = satin band width when fillMode === "outline"
+      return { spacing: 0.45, angle: 0, stitchLength: 3.0, underlay: true, outline: false,
+               satinMaxWidth: 6, borderWidth: 2, fillMode: "fill" };
     case "text":
       return {
         text: "Text", font: "Anton", size: 16, letterSpacing: 0,
-        spacing: 0.4, stitchLength: 2.5, angle: 0, underlay: true,
+        spacing: 0.4, stitchLength: 2.5, angle: 0, underlay: true, satinMaxWidth: 6,
         bold: false, italic: false, underline: false, curve: 0,
         outline: false, outlineLen: 2.0,
       };

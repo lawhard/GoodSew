@@ -981,6 +981,11 @@ function refreshStitchSettings() {
   row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { p.spacing = v; recompileLive(); }));
   row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { p.stitchLength = v; recompileLive(); }));
   row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { p.angle = v; recompileLive(); }));
+  // Regions narrower than this auto-stitch as satin (raise to force satin, lower to force fill).
+  row(host, "Satin ≤ width (mm)", numInput(p.satinMaxWidth ?? 6, 0.5, 0, (v) => { p.satinMaxWidth = v; recompileLive(); }));
+  if (p.fillMode === "outline") {
+    row(host, "Border width (mm)", numInput(p.borderWidth ?? 2, 0.2, 0.5, (v) => { p.borderWidth = v; recompileLive(); }));
+  }
 
   const under = document.createElement("input"); under.type = "checkbox"; under.checked = p.underlay !== false;
   under.onchange = () => { p.underlay = under.checked; recompileLive(); commit(); };
