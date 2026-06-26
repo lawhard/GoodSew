@@ -4,30 +4,51 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoodSew — SE700 Embroidery Designer</title>
-  <link rel="stylesheet" href="css/styles.css?v=0.5.2" />
+  <meta name="description" content="Design text and logos, then turn them into real machine stitches — right in your browser. A free in-browser embroidery digitizer built for the Brother SE700." />
+  <meta name="theme-color" content="#2e7df6" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+
+  <!-- Open Graph / link preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="GoodSew" />
+  <meta property="og:title" content="GoodSew — Browser Embroidery Designer for the Brother SE700" />
+  <meta property="og:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
+  <meta property="og:url" content="https://goodsew.win/" />
+  <meta property="og:image" content="https://goodsew.win/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="GoodSew — design embroidery in your browser" />
+
+  <!-- Twitter / X card -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="GoodSew — Browser Embroidery Designer for the Brother SE700" />
+  <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
+  <meta name="twitter:image" content="https://goodsew.win/og.png" />
+
+  <link rel="stylesheet" href="css/styles.css?v=0.5.3" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.5.2",
-      "./js/hoop.js": "./js/hoop.js?v=0.5.2",
-      "./js/threads.js": "./js/threads.js?v=0.5.2",
-      "./js/compiler.js": "./js/compiler.js?v=0.5.2",
-      "./js/stats.js": "./js/stats.js?v=0.5.2",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.5.2",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.5.2",
-      "./js/render.js": "./js/render.js?v=0.5.2",
-      "./js/simulator.js": "./js/simulator.js?v=0.5.2",
-      "./js/geometry.js": "./js/geometry.js?v=0.5.2",
-      "./js/shapes.js": "./js/shapes.js?v=0.5.2",
-      "./js/fonts.js": "./js/fonts.js?v=0.5.2",
-      "./js/units.js": "./js/units.js?v=0.5.2",
-      "./js/preview.js": "./js/preview.js?v=0.5.2",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.5.2",
-      "./js/qa.js": "./js/qa.js?v=0.5.2",
-      "./js/stitches.js": "./js/stitches.js?v=0.5.2"
+      "./js/state.js": "./js/state.js?v=0.5.3",
+      "./js/hoop.js": "./js/hoop.js?v=0.5.3",
+      "./js/threads.js": "./js/threads.js?v=0.5.3",
+      "./js/compiler.js": "./js/compiler.js?v=0.5.3",
+      "./js/stats.js": "./js/stats.js?v=0.5.3",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.5.3",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.5.3",
+      "./js/render.js": "./js/render.js?v=0.5.3",
+      "./js/simulator.js": "./js/simulator.js?v=0.5.3",
+      "./js/geometry.js": "./js/geometry.js?v=0.5.3",
+      "./js/shapes.js": "./js/shapes.js?v=0.5.3",
+      "./js/fonts.js": "./js/fonts.js?v=0.5.3",
+      "./js/units.js": "./js/units.js?v=0.5.3",
+      "./js/preview.js": "./js/preview.js?v=0.5.3",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.5.3",
+      "./js/qa.js": "./js/qa.js?v=0.5.3",
+      "./js/stitches.js": "./js/stitches.js?v=0.5.3"
     }
   }
   </script>
@@ -113,7 +134,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.2</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.3</div>
     </main>
 
     <!-- Right -->
@@ -226,6 +247,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.5.2"></script>
+  <script type="module" src="js/app.js?v=0.5.3"></script>
 </body>
 </html>
