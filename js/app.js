@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.3"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.4"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -38,6 +38,24 @@ let shiftDown = false;
 let cursor = null;
 let hoverGuide = null;
 let shapeKind = "rect";
+// While dragging, which hoop centerline(s) the moving object is magnetically
+// snapped to (so render can highlight them). null when not snapped.
+let snapLines = { x: false, y: false };
+
+// How close (in screen pixels) the object center must come to a snap line
+// before it pulls in. Pixel-based so the feel is the same at any zoom.
+const SNAP_PX = 7;
+
+// Axis-aligned union bounds (+ center) of a set of objects, in world mm.
+function groupBounds(objs) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const o of objs) {
+    const b = getObjBox(o);
+    minX = Math.min(minX, b.cx - b.w / 2); maxX = Math.max(maxX, b.cx + b.w / 2);
+    minY = Math.min(minY, b.cy - b.h / 2); maxY = Math.max(maxY, b.cy + b.h / 2);
+  }
+  return { minX, minY, maxX, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
+}
 
 const $ = (id) => document.getElementById(id);
 const rad = (d) => (d * Math.PI) / 180;
@@ -229,6 +247,34 @@ function selectedObjects() {
 function translateObject(obj, dx, dy) {
   obj.points = (obj.points || []).map((p) => ({ x: p.x + dx, y: p.y + dy }));
   if (obj.box) { obj.box = { ...obj.box, x: obj.box.x + dx, y: obj.box.y + dy }; rebuildShape(obj); }
+}
+
+// Fine-tune the selected objects by (dx,dy) mm (arrow-key nudging). Commits are
+// debounced so a burst of taps collapses into a single undo step.
+function nudgeSelected(dx, dy) {
+  const objs = selectedObjects();
+  if (!objs.length) return;
+  for (const o of objs) translateObject(o, dx, dy);
+  markDirty();
+  if (state.mode === "stitch") recompile();
+  refreshProps(); needsRender = true;
+  commitSoon();
+}
+
+// Center the selected objects (as a group) on the hoop. axis: "both" | "x" | "y".
+function centerSelected(axis = "both") {
+  const objs = selectedObjects();
+  if (!objs.length) return;
+  const hoop = getHoop(state.hoopId);
+  const gb = groupBounds(objs);
+  const dx = axis === "y" ? 0 : hoop.w / 2 - gb.cx;
+  const dy = axis === "x" ? 0 : hoop.h / 2 - gb.cy;
+  if (!dx && !dy) return;
+  for (const o of objs) translateObject(o, dx, dy);
+  markDirty();
+  if (state.mode === "stitch") recompile();
+  refreshProps(); needsRender = true;
+  commit();
 }
 
 // ----------------------------------------------------------- clipboard / dup
@@ -431,6 +477,7 @@ function addText(anchor) {
   setTool("select");
   refreshObjectList(); refreshProps(); updateEmptyHint();
   commit();
+  return obj;
 }
 
 function addShape(kind, box) {
@@ -545,7 +592,7 @@ canvas.addEventListener("mousedown", (e) => {
     } else {
       setSel([hit.id]);
     }
-    drag = { mode: "move", start: world, items: selectedObjects().map((o) => ({ obj: o, orig: snapshot(o) })) };
+    drag = { mode: "move", start: world, c0: groupBounds(selectedObjects()), items: selectedObjects().map((o) => ({ obj: o, orig: snapshot(o) })) };
     refreshProps(); refreshObjectList(); needsRender = true;
   } else {
     // empty space: deselect (unless extending) and pan the view
@@ -589,7 +636,17 @@ canvas.addEventListener("mousemove", (e) => {
     }
     drag.obj.box = box; rebuildShape(drag.obj); markDirty();
   } else if (drag.mode === "move") {
-    const dx = world.x - drag.start.x, dy = world.y - drag.start.y;
+    let dx = world.x - drag.start.x, dy = world.y - drag.start.y;
+    // Magnetic snap: when the moving group's center comes close to a hoop
+    // centerline it nudges onto it. Hold Alt to move freely (bypass snap).
+    snapLines = { x: false, y: false };
+    if (!e.altKey && drag.c0) {
+      const hoop = getHoop(state.hoopId);
+      const tol = SNAP_PX / cam.pxPerMm; // px → mm at the current zoom
+      const ncx = drag.c0.cx + dx, ncy = drag.c0.cy + dy;
+      if (Math.abs(ncx - hoop.w / 2) < tol) { dx += hoop.w / 2 - ncx; snapLines.x = true; }
+      if (Math.abs(ncy - hoop.h / 2) < tol) { dy += hoop.h / 2 - ncy; snapLines.y = true; }
+    }
     for (const it of drag.items) {
       it.obj.points = it.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
       if (it.orig.box) {
@@ -668,6 +725,7 @@ window.addEventListener("mouseup", () => {
     }
   }
   drag = null;
+  snapLines = { x: false, y: false };
   needsRender = true;
 });
 
@@ -688,7 +746,27 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+
+  // Normalize the wheel delta across mice / trackpads and delta modes so the
+  // feel is consistent everywhere.
+  let dy = e.deltaY;
+  if (e.deltaMode === 1) dy *= 16;                       // lines → px
+  else if (e.deltaMode === 2) dy *= canvas.clientHeight; // pages → px
+
+  // Two-finger scroll (or shift+wheel for horizontal) pans instead of zooming,
+  // which keeps zoom from feeling twitchy on trackpads.
+  if (!e.ctrlKey && !e.metaKey && (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey)) {
+    let dx = e.shiftKey && !e.deltaX ? dy : e.deltaX;
+    if (e.deltaMode === 1) dx *= 16; else if (e.deltaMode === 2) dx *= canvas.clientWidth;
+    cam.panX -= dx; cam.panY -= (e.shiftKey ? 0 : e.deltaY);
+    needsRender = true;
+    return;
+  }
+
+  // Gentle, proportional zoom. Clamp the per-event delta so a hard flick (or a
+  // big trackpad gesture) can't jump several steps at once.
+  dy = Math.max(-50, Math.min(50, dy));
+  const factor = Math.exp(-dy * 0.0016);
   cam.zoomAt(e.offsetX, e.offsetY, factor);
   $("hud-zoom").textContent = Math.round(cam.pxPerMm / baseScale() * 100) + "%";
   needsRender = true;
@@ -785,6 +863,25 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === " ") spaceDown = true;
+
+  // Arrow keys fine-tune the selected object(s). Default 0.5 mm steps; hold
+  // Shift for a coarse 5 mm jump, Alt for a precise 0.1 mm tweak.
+  if (state.mode === "design" && state.selectedIds.length && e.key.startsWith("Arrow")) {
+    const step = e.shiftKey ? 5 : e.altKey ? 0.1 : 0.5;
+    let dx = 0, dy = 0;
+    if (e.key === "ArrowLeft") dx = -step;
+    else if (e.key === "ArrowRight") dx = step;
+    else if (e.key === "ArrowUp") dy = -step;
+    else if (e.key === "ArrowDown") dy = step;
+    nudgeSelected(dx, dy);
+    e.preventDefault();
+    return;
+  }
+  // "C" centers the current selection on the hoop.
+  if (state.mode === "design" && state.selectedIds.length && e.key.toLowerCase() === "c" && !e.ctrlKey && !e.metaKey) {
+    centerSelected("both"); e.preventDefault(); return;
+  }
+
   if (state.mode === "design") {
     switch (e.key.toLowerCase()) {
       case "v": setTool("select"); break;
@@ -969,6 +1066,28 @@ function refreshProps() {
 
   if (obj.type === "text") buildTextProps(host, obj);
   else buildShapeProps(host, obj);
+
+  // Position helpers: one-click centering + a discoverability hint for the
+  // drag-snap and arrow-key nudging.
+  const posLbl = document.createElement("div");
+  posLbl.className = "prop-sublabel"; posLbl.textContent = "Position";
+  host.appendChild(posLbl);
+  const posRow = document.createElement("div"); posRow.className = "layout-grid";
+  for (const [txt, axis, title] of [
+    ["Center", "both", "Center on the hoop (C)"],
+    ["Center H", "x", "Center horizontally"],
+    ["Center V", "y", "Center vertically"],
+  ]) {
+    const b = document.createElement("button");
+    b.className = "layout-btn"; b.textContent = txt; b.title = title;
+    b.onclick = () => centerSelected(axis);
+    posRow.appendChild(b);
+  }
+  host.appendChild(posRow);
+  const nudgeHint = document.createElement("div");
+  nudgeHint.className = "prop-hint";
+  nudgeHint.textContent = "Drag snaps to center · arrow keys nudge (Shift = 5 mm, Alt = 0.1 mm)";
+  host.appendChild(nudgeHint);
 
   const del = document.createElement("button");
   del.className = "btn btn-danger"; del.textContent = "Delete object";
@@ -1416,7 +1535,7 @@ function updateSimColor(s) {
 function frame() {
   if (needsRender) {
     if (state.mode === "stitch") ensureCompiled();
-    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, unit: UNITS[state.units] });
+    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, snapLines, unit: UNITS[state.units] });
     needsRender = false;
   }
   requestAnimationFrame(frame);
@@ -1449,6 +1568,7 @@ function boot() {
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
     setSel, selectedObjects, copySelection, pasteClipboard, duplicateSelection, groupSelection, ungroupSelection, alignSelected, distributeSelected,
+    nudgeSelected, centerSelected, groupBounds, cam,
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
     exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
     exportDSTBytes: () => { ensureCompiled(); return Array.from(exportDST(compiled)); },

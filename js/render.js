@@ -112,11 +112,23 @@ export function render(ctx, state, compiled, sim, opts) {
 
   ctx.strokeStyle = TH.fieldBorder; ctx.lineWidth = 1.5;
   ctx.strokeRect(o.x, o.y, fw, fh);
+  const snap = opts.snapLines || {};
   ctx.strokeStyle = TH.cross; ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(o.x + fw / 2, o.y); ctx.lineTo(o.x + fw / 2, o.y + fh);
-  ctx.moveTo(o.x, o.y + fh / 2); ctx.lineTo(o.x + fw, o.y + fh / 2);
+  if (!snap.x) { ctx.moveTo(o.x + fw / 2, o.y); ctx.lineTo(o.x + fw / 2, o.y + fh); }
+  if (!snap.y) { ctx.moveTo(o.x, o.y + fh / 2); ctx.lineTo(o.x + fw, o.y + fh / 2); }
   ctx.stroke();
+  // Highlight a centerline while an object is magnetically snapped to it.
+  if (snap.x || snap.y) {
+    ctx.save();
+    ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5;
+    ctx.shadowColor = ACCENT; ctx.shadowBlur = 6;
+    ctx.beginPath();
+    if (snap.x) { ctx.moveTo(o.x + fw / 2, o.y - 6); ctx.lineTo(o.x + fw / 2, o.y + fh + 6); }
+    if (snap.y) { ctx.moveTo(o.x - 6, o.y + fh / 2); ctx.lineTo(o.x + fw + 6, o.y + fh / 2); }
+    ctx.stroke();
+    ctx.restore();
+  }
 
   if (state.mode === "stitch") {
     const simActive = sim && sim.total > 0 && sim.engaged;

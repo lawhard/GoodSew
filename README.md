@@ -88,7 +88,16 @@ and an optional **outline pass**, then simulate and export.
   (Ctrl C/X/V/D), select-all (Ctrl+A), group / ungroup, and align / distribute
   (left/center/right, top/middle/bottom, spread H/V) from the multi-select panel.
 - **Layers** — drag objects up/down in the Objects panel to set draw / stitch order.
-- **Pan & zoom** — scroll to zoom; drag any empty part of the plate to pan (or hold Space / middle-drag).
+- **Snap-to-center & nudging** — while you drag an object, its center
+  **magnetically snaps** to the hoop's center line (a highlighted blue guide)
+  so getting things centered is effortless; hold **Alt** to move freely. Once
+  placed, **arrow keys** fine-tune the selection by 0.5 mm (hold **Shift** for
+  5 mm, **Alt** for a precise 0.1 mm), and **C** (or the **Center / Center H /
+  Center V** buttons in Properties) snaps it to the hoop center.
+- **Pan & zoom** — smooth, gentle **scroll-to-zoom** (proportional, so it
+  won't jump on a trackpad) toward the cursor; **two-finger scroll** (or
+  **Shift + wheel**) pans; or drag any empty part of the plate to pan (also
+  Space-drag / middle-drag).
 - **Product preview** — see the design composited at *true physical scale* onto
   a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom
   rectangle whose dimensions you type in. Each mockup is drawn to real-world
