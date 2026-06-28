@@ -35,10 +35,14 @@ to scale (hold **Shift** for even/locked aspect), and use the **rotate knob** to
 spin. Everything is meant to feel like Word or an image markup tool.
 
 - **Text** — click to drop, then just type. **Double-click** any text to edit it
-  in place. A prominent **Font Library** shows all 11 embroidery-friendly fonts
-  rendered live with your own words so you can pick visually. Make text **bold /
-  italic / underlined**, bend it into an **arc or full circle**, set its size and
-  rotation, and recolor it — all from a clean properties panel.
+  in place. A prominent **Font Library** shows **36 embroidery-friendly fonts**
+  rendered live with your own words so you can pick visually. They're **grouped
+  into categories** — Block, Sans-serif, Serif, Slab serif, Cursive,
+  Handwritten and Display — each heading set in a font representative of that
+  group, with quick filter chips (also drawn in their own styles) to jump
+  between them. Make text **bold / italic / underlined**, bend it into an **arc
+  or full circle**, set its size and rotation, and recolor it — all from a clean
+  properties panel.
 - **Shapes** — a visual picker (not a dropdown): rectangle, rounded rectangle,
   ellipse/circle, triangle, diamond, pentagon, hexagon, 5/6-point stars and
   heart. Pick one, drag to place (Shift for an even shape), then resize/rotate

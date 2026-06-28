@@ -3,20 +3,84 @@
 
 import { flattenCubic, flattenQuad, bbox } from "./geometry.js";
 
-// Curated, embroidery-friendly open-license fonts (heavy/bold styles stitch best).
-export const FONTS = [
-  { name: "Anton",        file: "Anton.ttf",        category: "Sans · heavy" },
-  { name: "Archivo Black",file: "ArchivoBlack.ttf", category: "Sans · heavy" },
-  { name: "Fjalla One",   file: "FjallaOne.ttf",    category: "Sans" },
-  { name: "Righteous",    file: "Righteous.ttf",    category: "Sans · round" },
-  { name: "Alfa Slab One",file: "AlfaSlabOne.ttf",  category: "Slab" },
-  { name: "Arvo",         file: "Arvo.ttf",         category: "Slab serif" },
-  { name: "Crimson Text", file: "CrimsonText.ttf",  category: "Serif" },
-  { name: "Lobster",      file: "Lobster.ttf",      category: "Script" },
-  { name: "Pacifico",     file: "Pacifico.ttf",     category: "Script · casual" },
-  { name: "Great Vibes",  file: "GreatVibes.ttf",   category: "Script · formal" },
-  { name: "Bangers",      file: "Bangers.ttf",      category: "Display" },
+// Font categories. Each has a short, human-readable label and a "rep" font —
+// the family used to render the category's own heading in the gallery, so the
+// label looks like the fonts it contains. `blurb` is a one-line description.
+export const FONT_CATEGORIES = [
+  { id: "block",  label: "Block",       rep: "Anton",           blurb: "Bold & high-impact" },
+  { id: "sans",   label: "Sans-serif",  rep: "Bebas Neue",      blurb: "Clean & modern" },
+  { id: "serif",  label: "Serif",       rep: "Cardo",           blurb: "Classic, Times-like" },
+  { id: "slab",   label: "Slab serif",  rep: "Alfa Slab One",   blurb: "Chunky slab serifs" },
+  { id: "script", label: "Cursive",     rep: "Great Vibes",     blurb: "Flowing & connected" },
+  { id: "hand",   label: "Handwritten", rep: "Permanent Marker",blurb: "Casual & marker styles" },
+  { id: "display",label: "Display",     rep: "Bangers",         blurb: "Fun & decorative" },
 ];
+
+// Curated, embroidery-friendly open-license fonts, grouped by category. Heavy /
+// bold styles stitch best; cursive & thin display faces are included for variety.
+export const FONTS = [
+  // ---- Block: heavy, bold, poster-weight ----
+  { name: "Anton",          file: "Anton.ttf",          cat: "block" },
+  { name: "Archivo Black",  file: "ArchivoBlack.ttf",   cat: "block" },
+  { name: "Titan One",      file: "TitanOne.ttf",       cat: "block" },
+  { name: "Passion One",    file: "PassionOne.ttf",     cat: "block" },
+  { name: "Bowlby One",     file: "BowlbyOne.ttf",      cat: "block" },
+  { name: "Luckiest Guy",   file: "LuckiestGuy.ttf",    cat: "block" },
+  { name: "Righteous",      file: "Righteous.ttf",      cat: "block" },
+
+  // ---- Sans-serif: clean, modern ----
+  { name: "Bebas Neue",     file: "BebasNeue.ttf",      cat: "sans" },
+  { name: "Fjalla One",     file: "FjallaOne.ttf",      cat: "sans" },
+  { name: "Staatliches",    file: "Staatliches.ttf",    cat: "sans" },
+  { name: "Pathway Gothic", file: "PathwayGothicOne.ttf",cat: "sans" },
+  { name: "Poppins",        file: "Poppins.ttf",        cat: "sans" },
+
+  // ---- Serif: classic, Times-like ----
+  { name: "Crimson Text",   file: "CrimsonText.ttf",    cat: "serif" },
+  { name: "PT Serif",       file: "PTSerif.ttf",        cat: "serif" },
+  { name: "Cardo",          file: "Cardo.ttf",          cat: "serif" },
+
+  // ---- Slab serif: chunky ----
+  { name: "Alfa Slab One",  file: "AlfaSlabOne.ttf",    cat: "slab" },
+  { name: "Arvo",           file: "Arvo.ttf",           cat: "slab" },
+  { name: "Bevan",          file: "Bevan.ttf",          cat: "slab" },
+  { name: "Patua One",      file: "PatuaOne.ttf",       cat: "slab" },
+
+  // ---- Cursive / script: flowing, connected ----
+  { name: "Great Vibes",    file: "GreatVibes.ttf",     cat: "script" },
+  { name: "Lobster",        file: "Lobster.ttf",        cat: "script" },
+  { name: "Pacifico",       file: "Pacifico.ttf",       cat: "script" },
+  { name: "Allura",         file: "Allura.ttf",         cat: "script" },
+  { name: "Sacramento",     file: "Sacramento.ttf",     cat: "script" },
+  { name: "Kaushan Script", file: "KaushanScript.ttf",  cat: "script" },
+  { name: "Satisfy",        file: "Satisfy.ttf",        cat: "script" },
+  { name: "Yellowtail",     file: "Yellowtail.ttf",     cat: "script" },
+  { name: "Courgette",      file: "Courgette.ttf",      cat: "script" },
+
+  // ---- Handwritten: casual, marker ----
+  { name: "Permanent Marker",file: "PermanentMarker.ttf",cat: "hand" },
+  { name: "Patrick Hand",   file: "PatrickHand.ttf",    cat: "hand" },
+  { name: "Gloria Hallelujah",file: "GloriaHallelujah.ttf",cat: "hand" },
+
+  // ---- Display: fun, decorative ----
+  { name: "Bangers",        file: "Bangers.ttf",        cat: "display" },
+  { name: "Bungee",         file: "Bungee.ttf",         cat: "display" },
+  { name: "Creepster",      file: "Creepster.ttf",      cat: "display" },
+  { name: "Monoton",        file: "Monoton.ttf",        cat: "display" },
+  { name: "Press Start 2P", file: "PressStart2P.ttf",   cat: "display" },
+];
+
+// Fonts belonging to a category id, in catalog order.
+export function fontsInCategory(catId) {
+  return FONTS.filter((f) => f.cat === catId);
+}
+
+// Build the @font-face CSS for every catalog font (so the live DOM previews
+// match what gets stitched). Keeping this generated from FONTS means adding a
+// font is a one-line change here — no parallel edit in the stylesheet.
+export function fontFaceCSS() {
+  return FONTS.map((f) => `@font-face{font-family:"${cssFamily(f.name)}";src:url("fonts/${f.file}");font-display:swap;}`).join("\n");
+}
 
 // CSS family name for live (DOM) previews — must match the @font-face rules.
 export function cssFamily(name) {

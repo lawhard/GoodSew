@@ -15,13 +15,13 @@ import { Camera, render, RULER, getObjBox, boxHandlesWorld } from "./render.js";
 import { Simulator } from "./simulator.js";
 import { dist, bbox, rotatePoint, pointInPolygon } from "./geometry.js";
 import { SHAPES, buildShape } from "./shapes.js";
-import { FONTS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js";
+import { FONTS, FONT_CATEGORIES, fontsInCategory, fontFaceCSS, loadFont, loadedFont, textToGlyphs, cssFamily } from "./fonts.js";
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.4"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.5"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -1350,31 +1350,70 @@ function drawTextureThumb(cv, kind) {
 
 // ----------------------------------------------------------- font gallery
 let fontTarget = null;
+let fontCatFilter = "all"; // "all" or a category id
+
+// The chip row that lets you jump to / filter by category. Each chip's label is
+// drawn in a font representative of that category so the styles read at a glance.
+function buildFontCats() {
+  const bar = $("font-cats");
+  if (!bar) return;
+  bar.innerHTML = "";
+  const mk = (id, label, repName) => {
+    const chip = document.createElement("button");
+    chip.className = "font-cat-chip" + (fontCatFilter === id ? " active" : "");
+    chip.textContent = label;
+    if (repName) chip.style.fontFamily = cssFamily(repName) + ", sans-serif";
+    chip.onclick = () => { fontCatFilter = id; buildFontCats(); buildFontGrid(); };
+    bar.appendChild(chip);
+  };
+  mk("all", "All", "Anton");
+  for (const c of FONT_CATEGORIES) mk(c.id, c.label, c.rep);
+}
+
 function buildFontGrid() {
   const grid = $("font-grid");
   const sample = $("font-sample").value || (fontTarget && fontTarget.params.text) || "Embroidery";
   grid.innerHTML = "";
-  for (const f of FONTS) {
-    const card = document.createElement("div");
-    card.className = "font-card" + (fontTarget && fontTarget.params.font === f.name ? " active" : "");
-    const s = document.createElement("div"); s.className = "font-sample";
-    s.style.fontFamily = cssFamily(f.name); s.textContent = sample;
-    const meta = document.createElement("div"); meta.className = "font-meta";
-    meta.innerHTML = `<div class="nm">${f.name}</div><div class="cat">${f.category}</div>`;
-    card.append(s, meta);
-    card.onclick = () => {
-      if (fontTarget) { fontTarget.params.font = f.name; bakeText(fontTarget, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }); commit(); }
-      closeFontGallery();
-    };
-    grid.appendChild(card);
+
+  const cats = fontCatFilter === "all" ? FONT_CATEGORIES : FONT_CATEGORIES.filter((c) => c.id === fontCatFilter);
+  for (const cat of cats) {
+    const fonts = fontsInCategory(cat.id);
+    if (!fonts.length) continue;
+
+    // Category heading, set in a representative font for that group.
+    const head = document.createElement("div");
+    head.className = "font-cat-head";
+    head.innerHTML =
+      `<span class="cat-name" style="font-family:${cssFamily(cat.rep)},sans-serif">${cat.label}</span>` +
+      `<span class="cat-blurb">${cat.blurb} · ${fonts.length}</span>`;
+    grid.appendChild(head);
+
+    for (const f of fonts) {
+      const card = document.createElement("div");
+      card.className = "font-card" + (fontTarget && fontTarget.params.font === f.name ? " active" : "");
+      const s = document.createElement("div"); s.className = "font-sample";
+      s.style.fontFamily = cssFamily(f.name); s.textContent = sample;
+      const meta = document.createElement("div"); meta.className = "font-meta";
+      meta.innerHTML = `<div class="nm">${f.name}</div><div class="cat">${cat.label}</div>`;
+      card.append(s, meta);
+      card.onclick = () => {
+        if (fontTarget) { fontTarget.params.font = f.name; bakeText(fontTarget, () => { markDirty(); refreshObjectList(); refreshProps(); needsRender = true; }); commit(); }
+        closeFontGallery();
+      };
+      grid.appendChild(card);
+    }
   }
 }
 function openFontGallery(obj) {
   fontTarget = obj;
   // ensure all faces are fetched so glyph baking is instant after pick
   FONTS.forEach((f) => loadFont(f.name).catch(() => {}));
+  // open on the category of the current font so the active pick is visible
+  const cur = FONTS.find((f) => f.name === obj.params.font);
+  fontCatFilter = cur ? cur.cat : "all";
   $("font-sample").value = obj.params.text && obj.params.text.trim() ? obj.params.text : "";
   $("font-modal").classList.remove("hidden");
+  buildFontCats();
   buildFontGrid();
 }
 function closeFontGallery() { $("font-modal").classList.add("hidden"); }
@@ -1542,9 +1581,18 @@ function frame() {
 }
 
 // ----------------------------------------------------------------- boot
+// Register @font-face for every catalog font (generated from FONTS), so the
+// live DOM previews in the gallery and properties panel use the real faces.
+function injectFontFaces() {
+  let el = document.getElementById("gs-font-faces");
+  if (!el) { el = document.createElement("style"); el.id = "gs-font-faces"; document.head.appendChild(el); }
+  el.textContent = fontFaceCSS();
+}
+
 function boot() {
   console.log(`GoodSew v${APP_VERSION} — JS bundle active`);
   const badge = $("version-badge"); if (badge) badge.textContent = `GoodSew v${APP_VERSION}`;
+  injectFontFaces();
   document.body.dataset.theme = state.theme;
   document.body.dataset.mode = state.mode;
   buildThreadPicker();
@@ -1568,7 +1616,7 @@ function boot() {
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
     setSel, selectedObjects, copySelection, pasteClipboard, duplicateSelection, groupSelection, ungroupSelection, alignSelected, distributeSelected,
-    nudgeSelected, centerSelected, groupBounds, cam,
+    nudgeSelected, centerSelected, groupBounds, cam, openFontGallery,
     compiledStats: () => { ensureCompiled(); return computeStats(compiled); },
     exportBytes: () => { ensureCompiled(); return Array.from(exportPES(compiled, "GoodSew")); },
     exportDSTBytes: () => { ensureCompiled(); return Array.from(exportDST(compiled)); },

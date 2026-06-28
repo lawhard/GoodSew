@@ -1,15 +1,6 @@
-/* ---------- font faces (for the live font gallery & text preview) ---------- */
-@font-face { font-family: "GS-Anton";        src: url("../fonts/Anton.ttf"); }
-@font-face { font-family: "GS-ArchivoBlack";  src: url("../fonts/ArchivoBlack.ttf"); }
-@font-face { font-family: "GS-FjallaOne";     src: url("../fonts/FjallaOne.ttf"); }
-@font-face { font-family: "GS-Righteous";     src: url("../fonts/Righteous.ttf"); }
-@font-face { font-family: "GS-AlfaSlabOne";   src: url("../fonts/AlfaSlabOne.ttf"); }
-@font-face { font-family: "GS-Arvo";          src: url("../fonts/Arvo.ttf"); }
-@font-face { font-family: "GS-CrimsonText";   src: url("../fonts/CrimsonText.ttf"); }
-@font-face { font-family: "GS-Lobster";       src: url("../fonts/Lobster.ttf"); }
-@font-face { font-family: "GS-Pacifico";      src: url("../fonts/Pacifico.ttf"); }
-@font-face { font-family: "GS-GreatVibes";    src: url("../fonts/GreatVibes.ttf"); }
-@font-face { font-family: "GS-Bangers";       src: url("../fonts/Bangers.ttf"); }
+/* Font faces for the live gallery & text preview are injected at runtime from
+   the FONTS catalog (js/fonts.js → injectFontFaces) so the list lives in one
+   place. */
 
 /* ---------- themes ---------- */
 :root, [data-theme="light"] {
@@ -334,7 +325,23 @@ input[type=range] { accent-color: var(--accent); }
   width: 100%; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px; font-size: 14px;
 }
+/* category filter chips — each label is set in a font from its own group */
+.font-cats { display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.font-cat-chip {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 999px; padding: 5px 13px; cursor: pointer; font-size: 14px; line-height: 1.2;
+}
+.font-cat-chip:hover { border-color: var(--accent); background: var(--panel-3); }
+.font-cat-chip.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+
 .font-grid { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+.font-cat-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin: 14px 2px 2px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.font-cat-head:first-child { margin-top: 2px; }
+.font-cat-head .cat-name { font-size: 26px; line-height: 1; color: var(--text); }
+.font-cat-head .cat-blurb { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 .font-card {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
