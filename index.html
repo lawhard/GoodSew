@@ -25,30 +25,30 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.5.5" />
+  <link rel="stylesheet" href="css/styles.css?v=0.5.6" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.5.5",
-      "./js/hoop.js": "./js/hoop.js?v=0.5.5",
-      "./js/threads.js": "./js/threads.js?v=0.5.5",
-      "./js/compiler.js": "./js/compiler.js?v=0.5.5",
-      "./js/stats.js": "./js/stats.js?v=0.5.5",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.5.5",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.5.5",
-      "./js/render.js": "./js/render.js?v=0.5.5",
-      "./js/simulator.js": "./js/simulator.js?v=0.5.5",
-      "./js/geometry.js": "./js/geometry.js?v=0.5.5",
-      "./js/shapes.js": "./js/shapes.js?v=0.5.5",
-      "./js/fonts.js": "./js/fonts.js?v=0.5.5",
-      "./js/units.js": "./js/units.js?v=0.5.5",
-      "./js/preview.js": "./js/preview.js?v=0.5.5",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.5.5",
-      "./js/qa.js": "./js/qa.js?v=0.5.5",
-      "./js/stitches.js": "./js/stitches.js?v=0.5.5"
+      "./js/state.js": "./js/state.js?v=0.5.6",
+      "./js/hoop.js": "./js/hoop.js?v=0.5.6",
+      "./js/threads.js": "./js/threads.js?v=0.5.6",
+      "./js/compiler.js": "./js/compiler.js?v=0.5.6",
+      "./js/stats.js": "./js/stats.js?v=0.5.6",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.5.6",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.5.6",
+      "./js/render.js": "./js/render.js?v=0.5.6",
+      "./js/simulator.js": "./js/simulator.js?v=0.5.6",
+      "./js/geometry.js": "./js/geometry.js?v=0.5.6",
+      "./js/shapes.js": "./js/shapes.js?v=0.5.6",
+      "./js/fonts.js": "./js/fonts.js?v=0.5.6",
+      "./js/units.js": "./js/units.js?v=0.5.6",
+      "./js/preview.js": "./js/preview.js?v=0.5.6",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.5.6",
+      "./js/qa.js": "./js/qa.js?v=0.5.6",
+      "./js/stitches.js": "./js/stitches.js?v=0.5.6"
     }
   }
   </script>
@@ -102,9 +102,12 @@
       </div>
 
       <div class="tool-group mode-design">
-        <div class="group-label">Color</div>
-        <div id="active-thread-swatch" class="active-swatch" title="Active thread color"></div>
-        <select id="thread-picker" class="select"></select>
+        <div class="group-label">Thread</div>
+        <button id="thread-button" class="thread-button" title="Choose a New brothread color">
+          <span id="active-thread-swatch" class="active-swatch"></span>
+          <span id="active-thread-label" class="thread-label">White</span>
+          <span class="chev">▾</span>
+        </button>
       </div>
 
       <!-- STITCH view toggles -->
@@ -134,7 +137,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.5</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.5.6</div>
     </main>
 
     <!-- Right -->
@@ -202,6 +205,14 @@
     </div>
   </footer>
 
+  <!-- Thread color picker popover (New brothread palette) -->
+  <div id="color-popover" class="popover color-popover hidden">
+    <div class="popover-title">New brothread thread <span class="muted">— pick the spool you'll use</span></div>
+    <input id="color-search" class="color-search" type="text" placeholder="Search code or name (e.g. 405, Teal, N233)…" spellcheck="false" />
+    <label class="color-own"><input type="checkbox" id="color-own-only" /> Only the 40-spool kit</label>
+    <div id="color-groups" class="color-groups"></div>
+  </div>
+
   <!-- Shape picker popover -->
   <div id="shape-popover" class="popover hidden">
     <div class="popover-title">Pick a shape <span class="muted">— drag on the canvas to place · hold Shift for even</span></div>
@@ -248,6 +259,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.5.5"></script>
+  <script type="module" src="js/app.js?v=0.5.6"></script>
 </body>
 </html>

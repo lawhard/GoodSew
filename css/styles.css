@@ -98,7 +98,15 @@ body[data-mode="stitch"] .mode-design { display: none !important; }
 .tool:hover { background: var(--panel-3); }
 .tool.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 12px; cursor: pointer; }
-.active-swatch { height: 24px; border-radius: 6px; border: 1px solid var(--border); }
+.active-swatch { width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--border); flex-shrink: 0; }
+.thread-button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 8px; cursor: pointer; font-size: 12px; text-align: left;
+}
+.thread-button:hover { border-color: var(--accent); background: var(--panel-3); }
+.thread-button .thread-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-button .chev { color: var(--muted); }
 
 .select {
   width: 100%; background: var(--panel-2); color: var(--text);
@@ -279,6 +287,29 @@ input[type=range] { accent-color: var(--accent); }
 .shape-cell.active { border-color: var(--accent); background: var(--accent-soft); }
 .shape-cell svg { width: 100%; height: 100%; }
 .shape-cell svg * { fill: var(--text); stroke: none; }
+
+/* thread color picker popover */
+.color-popover { width: 320px; }
+.color-search {
+  width: 100%; background: var(--panel-2); color: var(--text); box-sizing: border-box;
+  border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font-size: 12.5px; margin-bottom: 7px;
+}
+.color-own { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer; margin-bottom: 8px; }
+.color-groups { max-height: 360px; overflow-y: auto; padding-right: 4px; }
+.color-group-label {
+  font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px;
+  margin: 10px 2px 5px; position: sticky; top: 0; background: var(--panel);
+}
+.color-group-label:first-child { margin-top: 0; }
+.swatch-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.swatch-cell {
+  aspect-ratio: 1; border-radius: 7px; border: 2px solid transparent; cursor: pointer;
+  position: relative; box-shadow: inset 0 0 0 1px rgba(0,0,0,.18);
+}
+.swatch-cell:hover { border-color: var(--accent); }
+.swatch-cell.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18), 0 0 0 2px var(--accent-soft); }
+.swatch-cell.vari { background-size: 200% 200%; }
+.color-empty { font-size: 11.5px; color: var(--muted); padding: 8px 2px; }
 
 /* ---------- version badge (bottom-right of the work area) ---------- */
 .version-badge {

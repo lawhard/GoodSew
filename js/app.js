@@ -6,7 +6,7 @@
 
 import { state, makeObject, selectedObject, markDirty, serialize, deserialize, nextId, defaultParams } from "./state.js";
 import { HOOPS, getHoop, SE700 } from "./hoop.js";
-import { BROTHER_PALETTE, rgbToHex } from "./threads.js";
+import { NEWBROTHREAD, NB_GROUPS, nbHex, nearestNewBrothread, rgbToHex, hexToRgb } from "./threads.js";
 import { compile } from "./compiler.js";
 import { computeStats, formatTime } from "./stats.js";
 import { exportPES } from "./export/pes.js";
@@ -21,7 +21,7 @@ import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.5"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.5.6"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -903,26 +903,91 @@ function deleteSelected() {
   commit();
 }
 
-// ----------------------------------------------------------------- UI build
+// ----------------------------------------------------------- thread colors
+// A short, human label for a hex color: its New brothread code + name (using
+// the nearest catalog color for arbitrary/legacy hex values).
+function threadLabel(hex) {
+  const e = nearestNewBrothread(hexToRgb(hex));
+  return `${e.code} · ${e.name}`;
+}
+
 function buildThreadPicker() {
-  const sel = $("thread-picker");
-  sel.innerHTML = "";
-  for (const t of BROTHER_PALETTE) {
-    const opt = document.createElement("option");
-    opt.value = rgbToHex(t.rgb);
-    opt.textContent = `#${t.i} ${t.name}`;
-    sel.appendChild(opt);
-  }
-  sel.value = state.activeColor;
-  sel.addEventListener("change", () => {
-    state.activeColor = sel.value;
+  const btn = $("thread-button");
+  if (btn) btn.onclick = () => openColorPicker(btn, state.activeColor, (hex) => {
+    state.activeColor = hex;
     updateActiveSwatch();
     const s = selectedObject();
-    if (s) { s.color = sel.value; markDirty(); refreshObjectList(); refreshProps(); needsRender = true; commit(); }
+    if (s) { s.color = hex; markDirty(); refreshObjectList(); refreshProps(); needsRender = true; commit(); }
   });
   updateActiveSwatch();
 }
-function updateActiveSwatch() { $("active-thread-swatch").style.background = state.activeColor; }
+function updateActiveSwatch() {
+  $("active-thread-swatch").style.background = state.activeColor;
+  const lbl = $("active-thread-label");
+  if (lbl) lbl.textContent = threadLabel(state.activeColor);
+}
+
+// ---- reusable New brothread swatch picker popover ----
+let colorPickState = { onPick: null, current: null };
+
+// Open the picker anchored near `anchorEl`. `onPick(hex)` fires on selection.
+function openColorPicker(anchorEl, currentHex, onPick) {
+  colorPickState = { onPick, current: (currentHex || "").toLowerCase() };
+  const pop = $("color-popover");
+  $("color-search").value = "";
+  $("color-own-only").checked = false;
+  buildColorGroups();
+  pop.classList.remove("hidden");
+  // position under the anchor, clamped to the viewport
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 12) + "px";
+  pop.style.top = Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 12) + "px";
+  setTimeout(() => $("color-search").focus(), 0);
+}
+function closeColorPicker() { $("color-popover").classList.add("hidden"); colorPickState.onPick = null; }
+
+function buildColorGroups() {
+  const host = $("color-groups");
+  host.innerHTML = "";
+  const q = ($("color-search").value || "").trim().toLowerCase();
+  const ownOnly = $("color-own-only").checked;
+  const match = (c) => (!ownOnly || c.set40) &&
+    (!q || c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q));
+
+  let shown = 0;
+  for (const g of NB_GROUPS) {
+    const items = NEWBROTHREAD.filter((c) => c.grp === g.id && match(c));
+    if (!items.length) continue;
+    const lbl = document.createElement("div");
+    lbl.className = "color-group-label";
+    lbl.textContent = `${g.label} · ${items.length}`;
+    host.appendChild(lbl);
+    const grid = document.createElement("div"); grid.className = "swatch-grid";
+    for (const c of items) {
+      const hex = nbHex(c);
+      const cell = document.createElement("button");
+      cell.className = "swatch-cell" + (c.vari ? " vari" : "") +
+        (hex.toLowerCase() === colorPickState.current ? " active" : "");
+      cell.title = `${c.code} · ${c.name}${c.set40 ? " (in 40-kit)" : ""}`;
+      if (c.vari) cell.style.background = `linear-gradient(135deg, ${hex}, #ffffff 45%, ${hex} 90%)`;
+      else cell.style.background = hex;
+      cell.onclick = () => { const cb = colorPickState.onPick; closeColorPicker(); if (cb) cb(hex); };
+      grid.appendChild(cell);
+      shown++;
+    }
+    host.appendChild(grid);
+  }
+  if (!shown) host.innerHTML = `<div class="color-empty">No thread matches “${q}”.</div>`;
+}
+$("color-search").addEventListener("input", buildColorGroups);
+$("color-own-only").addEventListener("change", buildColorGroups);
+// dismiss on outside click / Escape
+document.addEventListener("mousedown", (e) => {
+  const pop = $("color-popover");
+  if (pop.classList.contains("hidden")) return;
+  if (!pop.contains(e.target) && !e.target.closest(".thread-button, .color-swatch-btn")) closeColorPicker();
+});
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeColorPicker(); });
 
 function buildUnitToggle() {
   const wrap = $("unit-toggle");
@@ -1117,19 +1182,19 @@ function buildMultiProps(host) {
     const colors = [...new Set(objs.map((o) => o.color))];
     for (const col of colors) {
       const wrap = document.createElement("div"); wrap.className = "color-row";
-      const dot = document.createElement("span"); dot.className = "color-dot"; dot.style.background = col;
-      const sel = document.createElement("select"); sel.className = "select";
-      for (const t of BROTHER_PALETTE) { const o2 = document.createElement("option"); o2.value = rgbToHex(t.rgb); o2.textContent = `#${t.i} ${t.name}`; sel.appendChild(o2); }
-      sel.value = col;
-      sel.onchange = () => {
-        const nc = sel.value;
+      const btn = document.createElement("button"); btn.className = "thread-button color-swatch-btn";
+      const dot = document.createElement("span"); dot.className = "active-swatch"; dot.style.background = col;
+      const lab = document.createElement("span"); lab.className = "thread-label"; lab.textContent = threadLabel(col);
+      const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▾";
+      btn.append(dot, lab, chev);
+      btn.onclick = () => openColorPicker(btn, col, (nc) => {
         objs.filter((o) => o.color === col).forEach((o) => (o.color = nc));
         markDirty(); if (state.mode === "stitch") recompile();
         commit(); refreshObjectList(); refreshProps(); needsRender = true;
-      };
+      });
       const cnt = document.createElement("span"); cnt.className = "muted"; cnt.style.fontSize = "10.5px";
       cnt.textContent = `${objs.filter((o) => o.color === col).length}×`;
-      wrap.append(dot, sel, cnt); host.appendChild(wrap);
+      wrap.append(btn, cnt); host.appendChild(wrap);
     }
   }
 
@@ -1243,14 +1308,16 @@ function buildShapeProps(host, obj) {
 }
 
 function buildColorRow(host, obj) {
-  const wrap = document.createElement("div"); wrap.className = "color-row";
-  const dot = document.createElement("span"); dot.className = "color-dot"; dot.style.background = obj.color;
-  const sel = document.createElement("select"); sel.className = "select";
-  for (const t of BROTHER_PALETTE) { const o = document.createElement("option"); o.value = rgbToHex(t.rgb); o.textContent = `#${t.i} ${t.name}`; sel.appendChild(o); }
-  sel.value = obj.color;
-  sel.onchange = () => { obj.color = sel.value; dot.style.background = sel.value; markDirty(); refreshObjectList(); needsRender = true; commit(); };
-  wrap.append(dot, sel);
-  rowFull(host, "Thread color", wrap);
+  const btn = document.createElement("button"); btn.className = "thread-button color-swatch-btn";
+  const dot = document.createElement("span"); dot.className = "active-swatch"; dot.style.background = obj.color;
+  const lab = document.createElement("span"); lab.className = "thread-label"; lab.textContent = threadLabel(obj.color);
+  const chev = document.createElement("span"); chev.className = "chev"; chev.textContent = "▾";
+  btn.append(dot, lab, chev);
+  btn.onclick = () => openColorPicker(btn, obj.color, (hex) => {
+    obj.color = hex; dot.style.background = hex; lab.textContent = threadLabel(hex);
+    markDirty(); refreshObjectList(); needsRender = true; commit();
+  });
+  rowFull(host, "Thread color", btn);
 }
 
 // ----------------------------------------------------- stitch settings panel
@@ -1567,7 +1634,7 @@ function updateSimColor(s) {
   if (!compiled || s.index === 0) { host.textContent = ""; host.style.background = "transparent"; return; }
   const entry = compiled.plan[Math.min(s.index - 1, compiled.plan.length - 1)];
   const c = compiled.colors[entry.color];
-  if (c) { host.style.background = c.color; host.textContent = `#${c.brother.i} ${c.brother.name}`; }
+  if (c) { host.style.background = c.color; host.textContent = threadLabel(c.color); }
 }
 
 // ----------------------------------------------------------------- main loop

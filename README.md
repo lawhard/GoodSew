@@ -61,6 +61,15 @@ spin. Everything is meant to feel like Word or an image markup tool.
 - **Thread-pattern picker** — per object, choose the texture from labelled
   preview thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**,
   **Tatami**, or **Cross-hatch** (a perpendicular two-pass grid).
+- **Real thread colors** — pick from the full **New brothread 150-color palette**
+  (plus the one extra 40-spool color, so every spool you own is selectable) in a
+  searchable swatch picker, grouped by assortment (**Brother**, **Janome “N”**,
+  and **Variegated**). Filter to **just the 40-spool kit**, or search by code or
+  name (`405`, `Teal`, `N233`). The same picker is used for the active color, each
+  object's color, and per-thread logo recoloring. On-screen RGB are sourced from
+  the maker's own color cards (via the Ink/Stitch New Brothread palettes) and
+  Brother thread values. DST export keeps your exact color; PES still snaps to
+  the nearest Brother-64 index for the machine's on-screen color name.
 
 ### ② Render phase — stitch it
 Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a

@@ -98,7 +98,10 @@ console.log("Step 6: open the font library & pick Anton");
 await page.evaluate(() => document.querySelector(".font-btn").click());
 await sleep(400);
 ok(await page.evaluate(() => !document.getElementById("font-modal").classList.contains("hidden")), "font library opened");
-ok(await page.evaluate(() => document.querySelectorAll(".font-card").length === 11), "11 fonts in the gallery");
+// gallery opens filtered to the active font's category; show all, expect 36
+await page.evaluate(() => [...document.querySelectorAll(".font-cat-chip")].find((c) => c.textContent === "All").click());
+await sleep(150);
+ok(await page.evaluate(() => document.querySelectorAll(".font-card").length === 36), "36 fonts in the gallery");
 await page.evaluate(() => { const c = [...document.querySelectorAll(".font-card")].find((x) => x.textContent.includes("Anton")); c.click(); });
 await sleep(400);
 ok(await page.evaluate(() => window.__gs.state.objects.find((o) => o.type === "text").params.font === "Anton"), "font set to Anton");
