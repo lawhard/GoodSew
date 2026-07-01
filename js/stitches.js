@@ -240,6 +240,7 @@ export function fillContours(contours, params) {
     else if (sec.h <= satinMax && sec.h >= satinMin && sec.wMed >= 2.5 * sec.h) sec.style = "columns";
     else if (forced === "satin") sec.style = "zigzag";
     else sec.style = "tatami";
+    sec.spanCount = sec.spans.length;
 
     // entry points (for travel cost + direction): row styles enter at the
     // top/bottom row midpoints; column style enters at the left/right extremes.
@@ -270,12 +271,24 @@ export function fillContours(contours, params) {
     }
   }
 
+  // Uniformity pass: vertical-rung "columns" satin looks great on a standalone
+  // flat bar (a drawn rectangle, a whole thin stroke), but as a patch at a
+  // letter terminal (the base of a G, the top/bottom arcs of an o/d) it reads
+  // as a texture glitch against the neighboring ladder/tatami. Columns is kept
+  // ONLY for isolated sections (whole components); anything attached to other
+  // sections falls back to tatami, which blends with every neighbor.
+  for (const sec of sections) {
+    if (sec.style !== "columns") continue;
+    if ((secAdj.get(sec.idx) || new Set()).size > 0) sec.style = "tatami";
+  }
+
   // --- chain/subpath assembly with boundary-aware travel
   const subs = [];
   let chain = null, curPt = null;
   const endChain = () => { if (chain && chain.length >= 2) subs.push(chain); chain = null; };
   const startChain = (p) => { endChain(); chain = [p]; curPt = p; };
-  const stitchTo = (p) => { chain.push(p); curPt = p; };
+  // Skip micro-moves: near-duplicate penetrations only risk thread breaks.
+  const stitchTo = (p) => { if (curPt && dist(curPt, p) < 0.15) return; chain.push(p); curPt = p; };
 
   // Resampled region outlines for boundary travel (built lazily). Pulled
   // slightly INSIDE the boundary so short chords between walk points can't
@@ -365,6 +378,13 @@ export function fillContours(contours, params) {
     for (let i = 0; i < list.length; i++) {
       const S = span(list[i].ri, list[i].si);
       const y = rowYs[list[i].ri];
+      // near-degenerate span (a tapering tip): one penetration, no rung
+      if (S.x1 - S.x0 < 0.5) {
+        const m = { x: (S.x0 + S.x1) / 2, y };
+        if (dist(curPt, m) > 0.8 && !segmentInContours(curPt, m, rot)) connectTo(m);
+        else stitchTo(m);
+        continue;
+      }
       const a = { x: lead === 0 ? S.x0 : S.x1, y };
       // rail step: adjacent rows are interior-linked, but on a fast-drifting
       // edge the step can get long — verify, and reroute if it would exit.
@@ -503,9 +523,43 @@ export function generateUnderlay(points, inset = 1.0) {
 // rendered thread doesn't bleed over the edge and so every walked point lies
 // strictly inside the region. `region` (contours for an even-odd test) keeps the
 // inset from spiking outside at a sharp concave corner (e.g. a heart's notch).
+// Ramer–Douglas–Peucker simplification (open polyline). Keeps corners (any
+// vertex deviating more than `eps` from the chord) while dropping the dense
+// near-collinear vertex chatter that curve flattening produces — walking that
+// chatter verbatim emits hundreds of sub-0.3mm stitches (thread-break risk).
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Array(pts.length).fill(false);
+  keep[0] = keep[pts.length - 1] = true;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i0, i1] = stack.pop();
+    const a = pts[i0], b = pts[i1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const L = Math.hypot(dx, dy);
+    let worst = -1, wd = 0;
+    for (let i = i0 + 1; i < i1; i++) {
+      // degenerate chord (closed loop: start == end) → use radial distance so
+      // the farthest point splits the loop instead of everything collapsing
+      const d = L < 1e-9
+        ? Math.hypot(pts[i].x - a.x, pts[i].y - a.y)
+        : Math.abs((pts[i].x - a.x) * dy - (pts[i].y - a.y) * dx) / L;
+      if (d > wd) { wd = d; worst = i; }
+    }
+    if (worst >= 0 && wd > eps) {
+      keep[worst] = true;
+      stack.push([i0, worst], [worst, i1]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
 function edgeWalk(contour, spacing, inset = 0, region = null) {
   if (contour.length < 2) return [];
-  const base = inset > 0 ? offsetContourInward(contour, inset, region) : contour;
+  // simplify first: keep real corners, drop curve-flattening chatter
+  const simple = rdp([...contour, contour[0]], 0.12).slice(0, -1);
+  if (simple.length < 2) return [];
+  const base = inset > 0 ? offsetContourInward(simple, inset, region) : simple;
   const out = [base[0]];
   const closed = [...base, base[0]];
   for (let i = 1; i < closed.length; i++) {
@@ -572,6 +626,25 @@ function generateBorder(contours, params) {
   return subs;
 }
 
+// The compiler stitches a straight connector between consecutive subpaths
+// whenever the gap is small (≤ ~3mm) — but a small gap can still cross a
+// counter/hole (an 'o' counter is only ~2mm wide) or the notch between two
+// letters, sewing a visible thread straight over the aperture. Mark any close
+// join whose straight connector leaves the region so the compiler trims there
+// instead of gluing across.
+export function markUnsafeJoins(subs, contours) {
+  for (let i = 1; i < subs.length; i++) {
+    const A = subs[i - 1], B = subs[i];
+    if (!A.length || !B.length) continue;
+    const a = A[A.length - 1], b = B[0];
+    const gap = dist(a, b);
+    if (gap > 1e-9 && gap <= 3.2 && !segmentInContours(a, b, contours)) {
+      B._trimBefore = true;
+    }
+  }
+  return subs;
+}
+
 // Generate stitches for a text object from its cached glyph contours
 // (obj._glyphs: array of glyphs; each glyph is an array of contours in mm).
 // Returns an array of sub-paths so the compiler can trim/jump between glyphs.
@@ -581,8 +654,10 @@ export function generateText(obj) {
   const ay = (obj.points && obj.points[0]) ? obj.points[0].y : 0;
   const shift = (c) => c.map((p) => ({ x: p.x + ax, y: p.y + ay }));
   const subs = [];
+  const allContours = [];
   for (const contours of glyphs) {
     const moved = contours.map(shift);
+    allContours.push(...moved);
     // Fill each glyph with hole-aware tatami + a LIGHT underlay (outer edge run
     // only; no perpendicular tatami) so small lettering stays crisp and counters
     // stay open. The OUTLINE pass (params.outline) is handled inside
@@ -592,7 +667,10 @@ export function generateText(obj) {
       if (f.length) subs.push(f);
     }
   }
-  return subs;
+  // Re-check joins across the WHOLE text: two letters can sit < 3mm apart, and
+  // the compiler would otherwise stitch straight across the gap between them
+  // (or across a counter at a glyph boundary).
+  return markUnsafeJoins(subs, allContours);
 }
 
 // Returns an array of sub-paths (each an array of penetration points). Multiple
@@ -697,5 +775,7 @@ function fillWithUnderlay(contours, params, opts = {}) {
       if (o.length) subs.push(o);
     }
   }
-  return subs;
+  // Joins between passes (underlay → fill → outline / cross-hatch passes) can
+  // sit close together yet across a counter — mark them so the compiler trims.
+  return markUnsafeJoins(subs, valid);
 }

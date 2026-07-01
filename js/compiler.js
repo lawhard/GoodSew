@@ -72,7 +72,10 @@ export function compile() {
           fresh = true;
         } else {
           const gap = dist(prev, pts[0]);
-          if (gap > TRIM_GAP_MM) {
+          // `_trimBefore` is set by the generator on joins whose straight
+          // connector would leave the region (e.g. cross a letter counter):
+          // even a short gap must trim, never be stitched straight across.
+          if (gap > TRIM_GAP_MM || pts._trimBefore) {
             // Disjoint sub-path: tie off, trim, jump across, restart.
             lockAt(prev, prev2, ci);
             push(prev.x, prev.y, "trim", ci);
