@@ -48,16 +48,24 @@ spin. Everything is meant to feel like Word or an image markup tool.
   heart. Pick one, drag to place (Shift for an even shape), then resize/rotate
   like anything else. Filled or outline-only.
 - **Background image tracing** — import any image and lay artwork over it.
-- **SVG logo import** — bring a logo or vector art in as editable objects (the
-  **SVG logo** button). Paths and shapes are flattened through each element's
-  transform matrix (so transformed/flipped logos import correctly), with
-  sub-paths/holes detected automatically, fitted to the hoop, and colored from
-  their `fill` (`fill:none` → satin-border outline). All pieces are **grouped**
-  and start out all-selected. Click a single part on the canvas (or in the
-  Objects panel) to select just that layer and change its color or thread
-  pattern; Shift-click a range, or use **Select all**. With the whole logo
-  selected, a **Logo colors** submenu recolors each thread it uses. Imported art
-  moves, resizes, rotates and stitches like anything else.
+- **Logo import (SVG, PNG, JPG…)** — upload a logo and it's **auto-converted to
+  stitchable vector art** (the **Logo** button).
+  - **Raster logos (PNG/JPG/WebP/GIF)** are vectorized intelligently: the
+    background is detected and dropped (transparency, or the classic white
+    card), colors are **quantized to a stitchable palette** (≤6 threads, exact
+    brand colors recovered from clean interiors), speckle and anti-aliasing
+    halos are cleaned, and each color region is traced into smooth contours —
+    **holes included** — sized to the hoop.
+  - **SVG logos** are flattened through each element's transform matrix, with
+    colors resolved the way a browser renders them (inherited `<g>` fills,
+    `<style>` classes, gradients → nearest solid), invisible helpers skipped,
+    and full-canvas white background rects dropped. `fill:none` strokes become
+    satin-border outlines.
+  - All pieces arrive **grouped** and all-selected. Click a single part on the
+    canvas (or in the Objects panel) to recolor or re-pattern just that layer;
+    Shift-click a range, or use **Select all**. With the whole logo selected, a
+    **Logo colors** submenu recolors each thread it uses. Imported art moves,
+    resizes, rotates and stitches like anything else.
 - **Thread-pattern picker** — per object, choose the texture from labelled
   preview thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**,
   **Tatami**, or **Cross-hatch** (a perpendicular two-pass grid).

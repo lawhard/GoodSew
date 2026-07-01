@@ -19,9 +19,10 @@ import { FONTS, FONT_CATEGORIES, fontsInCategory, fontFaceCSS, loadFont, loadedF
 import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
+import { traceRaster, RASTER_MAX_DIM } from "./import/raster.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.5.9"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.6.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -309,11 +310,9 @@ function pasteData(dataArr, off = 5) {
   markDirty(); if (state.mode === "stitch") recompile();
   commit(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
 }
-// Import an SVG's geometry as editable fill/outline objects.
-function importSVG(text) {
-  let parsed;
-  try { parsed = parseSVG(text, getHoop(state.hoopId)); }
-  catch (e) { toast("SVG import failed: " + e.message, true); return; }
+// Instantiate parsed logo items ({items, box}) as one grouped set of editable
+// fill/outline objects — shared by the SVG and raster (PNG/JPG) importers.
+function addLogoItems(parsed, srcLabel) {
   const ids = [];
   const gid = nextId(); // group every piece so the logo selects/moves as one
   parsed.items.forEach((it, i) => {
@@ -327,7 +326,52 @@ function importSVG(text) {
   });
   setSel(ids);
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); commit(); needsRender = true;
-  toast(`Imported ${ids.length} path${ids.length === 1 ? "" : "s"} from SVG`);
+  toast(`Imported ${ids.length} part${ids.length === 1 ? "" : "s"} from ${srcLabel}`);
+}
+
+// Import an SVG's geometry as editable fill/outline objects.
+function importSVG(text) {
+  let parsed;
+  try { parsed = parseSVG(text, getHoop(state.hoopId)); }
+  catch (e) { toast("SVG import failed: " + e.message, true); return; }
+  addLogoItems(parsed, "SVG");
+}
+
+// Import a raster logo (PNG/JPG/WebP): auto-vectorize into per-color regions.
+function importRasterImage(imgEl) {
+  // work at a capped resolution — faster, and matches what thread resolves
+  const scale = Math.min(1, RASTER_MAX_DIM / Math.max(imgEl.naturalWidth || imgEl.width, imgEl.naturalHeight || imgEl.height));
+  const w = Math.max(2, Math.round((imgEl.naturalWidth || imgEl.width) * scale));
+  const h = Math.max(2, Math.round((imgEl.naturalHeight || imgEl.height) * scale));
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  const c2 = cv.getContext("2d", { willReadFrequently: true });
+  c2.drawImage(imgEl, 0, 0, w, h);
+  const imgData = c2.getImageData(0, 0, w, h);
+  importRasterData(imgData);
+}
+function importRasterData(imgData) {
+  let parsed;
+  try { parsed = traceRaster(imgData, getHoop(state.hoopId)); }
+  catch (e) { toast("Logo trace failed: " + e.message, true); return; }
+  addLogoItems(parsed, "your logo");
+}
+
+// Route an uploaded logo file to the right importer by type.
+function importLogoFile(f) {
+  const isSvg = /\.svg$/i.test(f.name) || f.type === "image/svg+xml";
+  if (isSvg) {
+    const reader = new FileReader();
+    reader.onload = () => importSVG(reader.result);
+    reader.readAsText(f);
+    return;
+  }
+  toast("Tracing logo…");
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => { try { importRasterImage(img); } finally { URL.revokeObjectURL(url); } };
+  img.onerror = () => { URL.revokeObjectURL(url); toast("Could not read that image file.", true); };
+  img.src = url;
 }
 
 function copySelection() { const o = selectedObjects(); if (o.length) clipboard = o.map(cloneData); }
@@ -1520,9 +1564,7 @@ $("btn-new").onclick = () => {
 };
 $("file-svg").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
-  const reader = new FileReader();
-  reader.onload = () => importSVG(reader.result);
-  reader.readAsText(f);
+  importLogoFile(f);
   e.target.value = "";
 };
 
@@ -1678,7 +1720,7 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText, importSVG, optimizeOrder, moveLayer, selectAllObjects,
+    addText, addShape, bakeText, importSVG, importRasterData, optimizeOrder, moveLayer, selectAllObjects,
     quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },
