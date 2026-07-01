@@ -322,17 +322,44 @@ function shade(hex, amt) {
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 }
 
+// Directional thread lighting. Real embroidery gets its texture from thread
+// being a shiny cylinder: stitches angled toward the light read bright, those
+// across it read dark. We quantize the (undirected) stitch angle into buckets
+// and cache the lit body/sheen styles per thread color, so the whole effect is
+// a lookup per stitch — no per-frame color math.
+const LIGHT_ANGLE = -Math.PI / 3.4; // light from the upper-left
+const LIT_BUCKETS = 10;
+const _litCache = new Map(); // color -> { edge, dark, body[], sheen[] }
+function litStyles(col) {
+  let c = _litCache.get(col);
+  if (!c) {
+    const body = [], sheen = [];
+    for (let b = 0; b < LIT_BUCKETS; b++) {
+      const t = b / (LIT_BUCKETS - 1);            // 0 = across light, 1 = along
+      body.push(shade(col, -0.22 + 0.4 * t));     // dark→bright with alignment
+      sheen.push(shade(col, 0.3 + 0.4 * t));
+    }
+    c = { edge: shade(col, -0.45), body, sheen };
+    _litCache.set(col, c);
+  }
+  return c;
+}
+
 function drawStitches(ctx, cam, compiled, upto, view) {
   const { plan, colors } = compiled;
   let penDown = false;
   let last = null;
-  // Thread is drawn in two strokes per stitch for fidelity: a full-width body
-  // (realistic ~0.4 mm coverage) plus a thin, lighter "sheen" core down the
-  // middle. The sheen makes individual threads readable even where the fill is
-  // thick/dense (otherwise it reads as a solid blob), and a slightly darker
-  // edge gives the stitches definition.
-  const bodyW = Math.max(1.0, cam.pxPerMm * 0.42);
-  const coreW = Math.max(0.5, cam.pxPerMm * 0.12);
+  // Each stitch is a shiny thread cylinder, drawn in three strokes:
+  //   1. a dark full-width edge (depth between neighboring threads — this is
+  //      what keeps dense fills from merging into a flat blob),
+  //   2. a directionally-LIT body (see litStyles),
+  //   3. a bright sheen core whose strength grows with stitch length, so long
+  //      satin throws glow while short tatami stitches stay matte.
+  // Zoomed in (≥ 9 px/mm) penetration dimples appear at needle points.
+  const bodyW = Math.max(1.2, cam.pxPerMm * 0.4);
+  const coreW = Math.max(0.6, cam.pxPerMm * 0.13);
+  const dimples = cam.pxPerMm >= 9;
+  const dimpleR = cam.pxPerMm * 0.07;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   const seg = (a, b) => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); };
@@ -343,18 +370,30 @@ function drawStitches(ctx, cam, compiled, upto, view) {
     if (s.cmd === "stitch") {
       const col = colors[s.color] ? colors[s.color].color : "#333";
       if (penDown && last) {
+        const dx = sp.x - last.x, dy = sp.y - last.y;
+        const lenPx = Math.hypot(dx, dy);
+        const lenMm = lenPx / cam.pxPerMm;
+        // angle→light alignment, folded to undirected [0..π)
+        let a = Math.atan2(dy, dx);
+        if (a < 0) a += Math.PI;
+        const align = Math.abs(Math.cos(a - LIGHT_ANGLE));
+        const bucket = Math.min(LIT_BUCKETS - 1, (align * LIT_BUCKETS) | 0);
+        const st = litStyles(col);
+
         ctx.globalAlpha = 1;
-        ctx.strokeStyle = shade(col, -0.28); ctx.lineWidth = bodyW; seg(last, sp); // edge/depth
-        ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.8, bodyW - 1.1); seg(last, sp); // body
-        // Sheen scales with stitch length: long satin throws catch light down
-        // the whole thread (glossy), short tatami stitches stay matte — this is
-        // what makes satin read as satin on real embroidery.
-        const lenMm = Math.hypot(sp.x - last.x, sp.y - last.y) / cam.pxPerMm;
-        ctx.globalAlpha = Math.min(0.85, 0.32 + lenMm * 0.12);
-        ctx.strokeStyle = shade(col, 0.45);
+        ctx.strokeStyle = st.edge; ctx.lineWidth = bodyW; seg(last, sp);        // depth edge
+        ctx.strokeStyle = st.body[bucket];
+        ctx.lineWidth = Math.max(0.8, bodyW - Math.max(1.2, bodyW * 0.3));
+        seg(last, sp);                                                          // lit body
+        ctx.globalAlpha = Math.min(0.9, 0.35 + lenMm * 0.11 + align * 0.15);
+        ctx.strokeStyle = st.sheen[bucket];
         ctx.lineWidth = lenMm > 1.8 ? Math.max(coreW, cam.pxPerMm * 0.16) : coreW;
-        seg(last, sp); // sheen core
+        seg(last, sp);                                                          // sheen core
         ctx.globalAlpha = 1;
+        if (dimples) {
+          ctx.fillStyle = "rgba(0,0,0,0.22)";
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, dimpleR, 0, Math.PI * 2); ctx.fill();
+        }
       }
       if (view.showPoints) {
         ctx.fillStyle = "rgba(0,0,0,0.55)";
