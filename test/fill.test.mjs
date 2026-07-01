@@ -191,7 +191,10 @@ for (const s of heartFill) for (let i = 1; i < s.length; i++) {
   if (!segmentInContours(s[i - 1], s[i], [heartPoly])) fillExit++;
 }
 ok(fillExit === 0, `heart FILL: zero connectors exit region (${fillExit}/${fillSegs})`);
-ok(heartFill.length <= 2, `heart FILL: ≤2 subpaths — no fold jumps (${heartFill.length})`);
+// Section decomposition sews lobe/lobe/body separately. A trim between them is
+// FINE (that's what a digitizer does); what is not fine is a stitched connector
+// crossing outside the region (asserted above) or across finished fill.
+ok(heartFill.length <= 4, `heart FILL: few subpaths — sections, no streaks (${heartFill.length})`);
 ok(totalPts(heartFill) > 100, `heart FILL: reasonable penetration count (${totalPts(heartFill)})`);
 ok(!hasBadCoord(heartFill), `heart FILL: no NaN/Infinity`);
 

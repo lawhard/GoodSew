@@ -105,15 +105,28 @@ export function pointInContours(pt, contours) {
   return inside;
 }
 
-// True if the straight segment a→b stays inside the filled region (even-odd).
-// We sample the midpoint plus a few interior points; a single midpoint test can
-// miss a thin hole that the segment grazes. Endpoints are skipped since they sit
-// on the boundary (penetration points lie exactly on contour edges).
-export function segmentInContours(a, b, contours, samples = 5) {
-  for (let i = 1; i <= samples; i++) {
-    const t = i / (samples + 1);
-    const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-    if (!pointInContours(p, contours)) return false;
+// True iff the open segment a→b stays inside the filled region (even-odd):
+// its midpoint is inside AND it properly crosses no boundary edge. EXACT (no
+// sampling), so verdicts are stable under rotation of the coordinate frame —
+// the fill generator (which works in rotated space) and design-space audits
+// always agree, and thin slivers/holes can't slip between sample points.
+function orient(p, q, r) {
+  return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+}
+function properCross(a, b, c, d) {
+  const eps = 1e-9;
+  const o1 = orient(a, b, c), o2 = orient(a, b, d);
+  const o3 = orient(c, d, a), o4 = orient(c, d, b);
+  return ((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
+         ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps));
+}
+export function segmentInContours(a, b, contours) {
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  if (!pointInContours(mid, contours)) return false;
+  for (const poly of contours) {
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if (properCross(a, b, poly[j], poly[i])) return false;
+    }
   }
   return true;
 }

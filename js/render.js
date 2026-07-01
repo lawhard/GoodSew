@@ -346,8 +346,14 @@ function drawStitches(ctx, cam, compiled, upto, view) {
         ctx.globalAlpha = 1;
         ctx.strokeStyle = shade(col, -0.28); ctx.lineWidth = bodyW; seg(last, sp); // edge/depth
         ctx.strokeStyle = col; ctx.lineWidth = Math.max(0.8, bodyW - 1.1); seg(last, sp); // body
-        ctx.globalAlpha = 0.55;
-        ctx.strokeStyle = shade(col, 0.45); ctx.lineWidth = coreW; seg(last, sp); // sheen core
+        // Sheen scales with stitch length: long satin throws catch light down
+        // the whole thread (glossy), short tatami stitches stay matte — this is
+        // what makes satin read as satin on real embroidery.
+        const lenMm = Math.hypot(sp.x - last.x, sp.y - last.y) / cam.pxPerMm;
+        ctx.globalAlpha = Math.min(0.85, 0.32 + lenMm * 0.12);
+        ctx.strokeStyle = shade(col, 0.45);
+        ctx.lineWidth = lenMm > 1.8 ? Math.max(coreW, cam.pxPerMm * 0.16) : coreW;
+        seg(last, sp); // sheen core
         ctx.globalAlpha = 1;
       }
       if (view.showPoints) {

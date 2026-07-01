@@ -166,169 +166,321 @@ export function fillContours(contours, params) {
     }
   }
 
-  // --- Walk each connected component, collecting its spans in serpentine order.
-  // We first gather the ordered (ri,si,dir) visit list for one CONNECTED COMPONENT
-  // (one seed's reachable closure), THEN decide how to stitch it: a NARROW
-  // component (median cross width ≤ satin threshold) is emitted as a rail-to-rail
-  // SATIN column (no interior penetrations) with an optional center-run underlay;
-  // a WIDE component keeps the existing tatami serpentine. Auto stitch-type
-  // selection happens per component, so a thin letter stem and a wide blob in the
-  // same object each get the right treatment.
-  const visited = new Set();
-  const reachableNeighbor = (ri, si) => {
-    const ns = adj.get(id(ri, si)) || [];
-    let best = null;
-    for (const n of ns) {
-      if (visited.has(id(n.ri, n.si))) continue;
-      if (!best || n.ri > best.ri) best = n;
-    }
-    return best;
-  };
-
-  // Build the ordered visit list for the component seeded at (sri,ssi). Mirrors
-  // the original serpentine traversal (down a vertical chain, then to the nearest
-  // interior-reachable unvisited span). Returns [{ ri, si, dir }].
-  const walkComponent = (sri, ssi) => {
-    const order = [];
-    let cur_ri = sri, cur_si = ssi, dir = 1;
-    let prevMid = null;
-    while (cur_ri !== -1) {
-      order.push({ ri: cur_ri, si: cur_si, dir });
-      visited.add(id(cur_ri, cur_si));
-      const S = span(cur_ri, cur_si);
-      prevMid = { x: (S.x0 + S.x1) / 2, y: rowYs[cur_ri] };
-      dir = -dir;
-      let next = reachableNeighbor(cur_ri, cur_si);
-      if (!next) {
-        let bestD = Infinity;
-        for (let ri = 0; ri < rows.length; ri++) {
-          for (let si = 0; si < rows[ri].length; si++) {
-            if (visited.has(id(ri, si))) continue;
-            const T = span(ri, si);
-            const cx = (T.x0 + T.x1) / 2;
-            const here = { x: cx, y: rowYs[ri] };
-            const d = dist(prevMid, here);
-            if (d < bestD && segmentInContours(prevMid, here, rot)) { bestD = d; next = { ri, si }; }
-          }
-        }
-      }
-      if (next) { cur_ri = next.ri; cur_si = next.si; } else cur_ri = -1;
-    }
-    return order;
-  };
-
-  // Satin auto-selection thresholds (mm). `satinMaxWidth` = widest column still
-  // treated as satin; below `satinMinWidth` a feature is too thin to satin
-  // (a single rail), so it stays tatami (it will just be a near-degenerate row).
+  // ---------------------------------------------------------------------------
+  // SECTION DECOMPOSITION (branch analysis) — the digitizer's core trick.
+  //
+  // The old traversal decided satin-vs-tatami for a whole connected COMPONENT
+  // (an entire letter) and always laid satin rungs along the scan rows. That
+  // produced spaghetti on rings/arcs, fill-like stripes on horizontal strokes,
+  // and stitched travel straight across finished fill.
+  //
+  // Instead, spans are grouped into SECTIONS: maximal vertical chains where each
+  // row has exactly one span linked 1-to-1 to the next row's span. A section is
+  // a simple ribbon (a letter stem, a bar, an arc slice, a blob). Chains break
+  // wherever spans split or merge (branch rows), so every section has a single
+  // coherent local direction — and each section independently gets the stitch
+  // style that suits it:
+  //   ladder  — narrow ribbon (median width ≤ satinMax): classic satin, rungs
+  //             across the ribbon, optional center-run underlay.
+  //   columns — thin FLAT ribbon (short in y, wide in x — a horizontal stroke):
+  //             satin again, but rungs VERTICAL so they cross the stroke.
+  //   zigzag  — forced satin on something wide both ways: true diagonal zig-zag
+  //             (visibly satin, unlike the old flat split rows).
+  //   tatami  — everything else: serpentine fill with brick offset.
+  // Sections are then sewn in nearest-first order; travel between them runs
+  // along the region BOUNDARY (hidden at the edge) when possible, or trims —
+  // never stitched straight across a finished fill.
   const satinMax = params.satinMaxWidth ?? 6;
   const satinMin = 0.6;
   const wantUnderlay = params.underlay !== false;
+  const forced = params.stitchType;
+  const maxSatinThrow = 7;
 
-  // Emit a WIDE component as the tatami serpentine (original behavior). Splits a
-  // new subpath whenever the interior connector to the next span fails.
-  const emitTatami = (order, out) => {
-    let cur = [];
-    let prev = null;
-    const flush = () => { if (cur.length >= 2) out.push(cur); cur = []; prev = null; };
-    for (const { ri, si, dir } of order) {
-      const S = span(ri, si);
-      const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
-      if (prev && !segmentInContours(prev, pts[0], rot)) flush();
-      cur.push(...pts);
-      prev = pts[pts.length - 1];
+  const upOf = (ri, si) => (adj.get(id(ri, si)) || []).filter((n) => n.ri === ri - 1);
+  const downOf = (ri, si) => (adj.get(id(ri, si)) || []).filter((n) => n.ri === ri + 1);
+
+  // --- build sections (rows are iterated top-down, so chain heads come first)
+  const secOf = new Map();
+  const sections = [];
+  for (let ri = 0; ri < rows.length; ri++) {
+    for (let si = 0; si < rows[ri].length; si++) {
+      if (secOf.has(id(ri, si))) continue;
+      const sec = { idx: sections.length, spans: [] };
+      let cur = { ri, si };
+      for (;;) {
+        sec.spans.push(cur);
+        secOf.set(id(cur.ri, cur.si), sec.idx);
+        const dn = downOf(cur.ri, cur.si);
+        if (dn.length !== 1) break;                       // split / dead end
+        const nxt = dn[0];
+        if (upOf(nxt.ri, nxt.si).length !== 1) break;      // merge below
+        if (secOf.has(id(nxt.ri, nxt.si))) break;
+        cur = nxt;
+      }
+      sections.push(sec);
     }
-    flush();
+  }
+
+  // --- per-section metrics & style
+  for (const sec of sections) {
+    const ws = sec.spans.map(({ ri, si }) => { const S = span(ri, si); return S.x1 - S.x0; })
+      .sort((a, b) => a - b);
+    sec.wMed = ws[Math.floor(ws.length / 2)];
+    sec.h = (sec.spans[sec.spans.length - 1].ri - sec.spans[0].ri + 1) * spacing;
+    let minX = Infinity, maxX = -Infinity, minXY = 0, maxXY = 0;
+    for (const { ri, si } of sec.spans) {
+      const S = span(ri, si);
+      if (S.x0 < minX) { minX = S.x0; minXY = rowYs[ri]; }
+      if (S.x1 > maxX) { maxX = S.x1; maxXY = rowYs[ri]; }
+    }
+    sec.minX = minX; sec.maxX = maxX;
+
+    if (forced === "fill") sec.style = "tatami";
+    else if (sec.wMed <= satinMax && sec.wMed >= satinMin) sec.style = "ladder";
+    else if (sec.h <= satinMax && sec.h >= satinMin && sec.wMed >= 2.5 * sec.h) sec.style = "columns";
+    else if (forced === "satin") sec.style = "zigzag";
+    else sec.style = "tatami";
+
+    // entry points (for travel cost + direction): row styles enter at the
+    // top/bottom row midpoints; column style enters at the left/right extremes.
+    const first = sec.spans[0], last = sec.spans[sec.spans.length - 1];
+    const FS = span(first.ri, first.si), LS = span(last.ri, last.si);
+    if (sec.style === "columns") {
+      sec.entries = [
+        { p: { x: minX, y: minXY }, end: "A" },
+        { p: { x: maxX, y: maxXY }, end: "B" },
+      ];
+    } else {
+      sec.entries = [
+        { p: { x: (FS.x0 + FS.x1) / 2, y: rowYs[first.ri] }, end: "A" },
+        { p: { x: (LS.x0 + LS.x1) / 2, y: rowYs[last.ri] }, end: "B" },
+      ];
+    }
+  }
+
+  // --- section adjacency (for nearest-first ordering preference)
+  const secAdj = new Map(); // idx -> Set(idx)
+  for (const [key, ns] of adj) {
+    const a = secOf.get(key);
+    for (const n of ns) {
+      const b = secOf.get(id(n.ri, n.si));
+      if (a === b) continue;
+      if (!secAdj.has(a)) secAdj.set(a, new Set());
+      secAdj.get(a).add(b);
+    }
+  }
+
+  // --- chain/subpath assembly with boundary-aware travel
+  const subs = [];
+  let chain = null, curPt = null;
+  const endChain = () => { if (chain && chain.length >= 2) subs.push(chain); chain = null; };
+  const startChain = (p) => { endChain(); chain = [p]; curPt = p; };
+  const stitchTo = (p) => { chain.push(p); curPt = p; };
+
+  // Resampled region outlines for boundary travel (built lazily). Pulled
+  // slightly INSIDE the boundary so short chords between walk points can't
+  // cut outside the region at a concave corner (e.g. across a heart's notch).
+  let _outlines = null;
+  const outlines = () => {
+    if (!_outlines) {
+      _outlines = rot.map((c) => offsetContourInward(resample([...c, c[0]], 1.2), 0.3, rot));
+    }
+    return _outlines;
+  };
+  const nearestOnBoundary = (p) => {
+    let best = null;
+    outlines().forEach((pts, ci) => pts.forEach((q, qi) => {
+      const d = dist(p, q);
+      if (!best || d < best.d) best = { d, ci, qi };
+    }));
+    return best;
+  };
+  // Travel from a to b along the boundary of the SAME contour (≤12mm), so the
+  // run hugs the edge instead of crossing finished fill. Returns points or null.
+  const boundaryTravel = (a, b) => {
+    const A = nearestOnBoundary(a), B = nearestOnBoundary(b);
+    if (!A || !B || A.ci !== B.ci || A.d > 3 || B.d > 3) return null;
+    const pts = outlines()[A.ci], n = pts.length;
+    const fwd = (B.qi - A.qi + n) % n, bwd = (A.qi - B.qi + n) % n;
+    const count = Math.min(fwd, bwd);
+    if (count * 1.2 > 12) return null;
+    const step = fwd <= bwd ? 1 : -1;
+    const walk = [];
+    for (let k = 0; k <= count; k++) walk.push(pts[(A.qi + step * k + n) % n]);
+    return walk; // keep the fine 1.2mm steps — inset+short chords stay inside
+  };
+  // Get the needle to `target`: plain stitch when close; short interior running
+  // when the straight line stays inside; boundary walk when near the same
+  // outline; otherwise a fresh subpath (compiler tie-off + trim + jump).
+  const connectTo = (target) => {
+    if (!curPt || !chain) { startChain(target); return; }
+    const d = dist(curPt, target);
+    if (d <= 1e-9) return;
+    // Direct interior travel only for SHORT hops (a long stitched connector
+    // lies visibly on top of the finished fill); anything longer goes along
+    // the boundary or gets a trim.
+    if (d <= 2.5 && segmentInContours(curPt, target, rot)) {
+      if (d <= 1.0) { stitchTo(target); return; }
+      const pts = resample([curPt, target], stitchLen);
+      for (let i = 1; i < pts.length; i++) stitchTo(pts[i]);
+      return;
+    }
+    const walk = boundaryTravel(curPt, target);
+    // The entry/exit chords (needle → walk start, walk end → target) must be
+    // verified too: at a pinch (a notch tip) the nearest outline point can lie
+    // on the far flank, and the chord would cut straight across the vee.
+    if (walk && walk.length &&
+        segmentInContours(curPt, walk[0], rot) &&
+        segmentInContours(walk[walk.length - 1], target, rot)) {
+      for (const p of walk) stitchTo(p);   // fine steps: chords stay inside
+      if (dist(curPt, target) > 1e-9) stitchTo(target);
+      return;
+    }
+    startChain(target);
   };
 
-  // Emit a NARROW component as a SATIN column: alternate rails so every stitch
-  // crosses the column, no interior points. Density along the column is the row
-  // spacing. A center-run underlay (midpoints per row) is pushed first.
-  const emitSatin = (order, out) => {
-    if (wantUnderlay) {
-      const centerRun = [];
-      let prev = null;
-      let run = [];
-      for (const { ri, si } of order) {
-        const S = span(ri, si);
-        const p = { x: (S.x0 + S.x1) / 2, y: rowYs[ri] };
-        if (prev && !segmentInContours(prev, p, rot)) {
-          if (run.length >= 2) centerRun.push(run);
-          run = [];
-        }
-        run.push(p);
-        prev = p;
-      }
-      if (run.length >= 2) centerRun.push(run);
-      for (const r of centerRun) out.push(r);
+  // Split-stitch straight toward `b`, keeping each stitch ≤ maxSatinThrow.
+  const throwTo = (b) => {
+    const d = dist(curPt, b);
+    const n = Math.max(1, Math.ceil(d / maxSatinThrow));
+    const a = curPt;
+    for (let k = 1; k <= n; k++) {
+      stitchTo({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
     }
-    // Satin rails: for each row push the two span ends, alternating which rail
-    // leads so the zig-zag stays continuous row to row.
-    //
-    // Wide-satin guard: a single rail-to-rail crossing on a wide column can far
-    // exceed the machine's max stitch (12.1mm) and, even after the compiler
-    // splits it, a 40mm satin throw is bad embroidery (loose, snag-prone). When a
-    // crossing exceeds maxSatinThrow we keep it SATIN (honoring the user's manual
-    // "Satin" override rather than silently switching to tatami) but insert
-    // evenly-spaced intermediate penetrations ALONG the crossing — "split satin",
-    // exactly what a digitizer does for a wide column. The points still lie on the
-    // straight rail-to-rail line, so coverage and direction are unchanged; each
-    // resulting stitch is ≤ maxSatinThrow.
-    const maxSatinThrow = 7;
-    let rail = [];
-    let prev = null;
-    const flush = () => { if (rail.length >= 2) out.push(rail); rail = []; prev = null; };
-    let lead = 0; // 0 → start at x0, 1 → start at x1
-    // Push a→b, subdividing if the crossing is too long for a clean satin stitch.
-    const pushCrossing = (a, b) => {
-      const d = Math.abs(b.x - a.x);
-      const n = Math.max(1, Math.ceil(d / maxSatinThrow));
-      for (let k = 1; k <= n; k++) {
-        rail.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y });
-      }
-    };
-    for (const { ri, si } of order) {
-      const S = span(ri, si);
-      const y = rowYs[ri];
+  };
+
+  // --- emitters (all work on a section, entered from end 'A' (top/left) or 'B')
+  const emitLadder = (sec, end) => {
+    const list = end === "A" ? sec.spans : sec.spans.slice().reverse();
+    const mids = list.map(({ ri, si }) => {
+      const S = span(ri, si); return { x: (S.x0 + S.x1) / 2, y: rowYs[ri] };
+    });
+    connectTo(mids[0]);
+    if (wantUnderlay && mids.length >= 2) {
+      // center-run underlay: down the ribbon and back (standard double run)
+      for (let i = 1; i < mids.length; i++) stitchTo(mids[i]);
+      for (let i = mids.length - 2; i >= 0; i--) stitchTo(mids[i]);
+    }
+    let lead = 0;
+    for (let i = 0; i < list.length; i++) {
+      const S = span(list[i].ri, list[i].si);
+      const y = rowYs[list[i].ri];
       const a = { x: lead === 0 ? S.x0 : S.x1, y };
-      const b = { x: lead === 0 ? S.x1 : S.x0, y };
-      // Break the column if the connector from the previous rail point would
-      // leave the region (a counter or a disconnected continuation).
-      if (prev && !segmentInContours(prev, a, rot)) flush();
-      rail.push(a);
-      pushCrossing(a, b);
-      prev = b;
+      // rail step: adjacent rows are interior-linked, but on a fast-drifting
+      // edge the step can get long — verify, and reroute if it would exit.
+      if (dist(curPt, a) > 0.8 && !segmentInContours(curPt, a, rot)) connectTo(a);
+      else stitchTo(a);
+      throwTo({ x: lead === 0 ? S.x1 : S.x0, y });
       lead ^= 1;
     }
-    flush();
   };
 
-  // Median cross-fill width of a component = median span length over its spans.
-  const componentWidth = (order) => {
-    const ws = order.map(({ ri, si }) => { const S = span(ri, si); return S.x1 - S.x0; });
-    ws.sort((p, q) => p - q);
-    return ws[Math.floor(ws.length / 2)];
+  const emitColumns = (sec, end) => {
+    // vertical satin rungs across a thin flat ribbon (a horizontal stroke)
+    const cols = [];
+    for (let x = sec.minX + spacing / 2; x < sec.maxX; x += spacing) {
+      // covering rows are contiguous for a 1-1 chain; use the first block
+      let y0 = Infinity, y1 = -Infinity, prevRi = null, blocked = false;
+      for (const { ri, si } of sec.spans) {
+        const S = span(ri, si);
+        if (x < S.x0 - 1e-9 || x > S.x1 + 1e-9) { if (y0 !== Infinity) blocked = true; continue; }
+        if (blocked) break; // only the first contiguous block
+        if (prevRi !== null && ri !== prevRi + 1 && y0 !== Infinity) break;
+        y0 = Math.min(y0, rowYs[ri]); y1 = Math.max(y1, rowYs[ri]); prevRi = ri;
+      }
+      if (y0 === Infinity) continue;
+      cols.push({ x, y0, y1 });
+    }
+    if (!cols.length) return;
+    if (end === "B") cols.reverse();
+    const mids = cols.map((c) => ({ x: c.x, y: (c.y0 + c.y1) / 2 }));
+    connectTo(mids[0]);
+    if (wantUnderlay && mids.length >= 2) {
+      for (let i = 1; i < mids.length; i++) stitchTo(mids[i]);
+      for (let i = mids.length - 2; i >= 0; i--) stitchTo(mids[i]);
+    }
+    let lead = 0;
+    for (const c of cols) {
+      const a = { x: c.x, y: lead === 0 ? c.y0 : c.y1 };
+      if (dist(curPt, a) > 0.8 && !segmentInContours(curPt, a, rot)) connectTo(a);
+      else stitchTo(a);
+      throwTo({ x: c.x, y: lead === 0 ? c.y1 : c.y0 });
+      lead ^= 1;
+    }
   };
 
-  const subs = [];
-  // Seed order: spans top-to-bottom, left-to-right.
-  const seeds = [];
-  for (let ri = 0; ri < rows.length; ri++)
-    for (let si = 0; si < rows[ri].length; si++) seeds.push({ ri, si });
-  seeds.sort((a, b) => (a.ri - b.ri) || (span(a.ri, a.si).x0 - span(b.ri, b.si).x0));
+  const emitZigzag = (sec, end) => {
+    // forced satin on a wide section: true diagonal zig-zag — one penetration
+    // per row, alternating rails, legs split to ≤ maxSatinThrow. Reads
+    // unmistakably as satin (glossy diagonals), unlike flat split rows.
+    const list = end === "A" ? sec.spans : sec.spans.slice().reverse();
+    let lead = 0;
+    for (let i = 0; i < list.length; i++) {
+      const S = span(list[i].ri, list[i].si);
+      const p = { x: lead === 0 ? S.x0 : S.x1, y: rowYs[list[i].ri] };
+      if (i === 0) connectTo(p);
+      else throwTo(p);
+      lead ^= 1;
+    }
+    // a second pass back fills the opposite diagonals so coverage is dense
+    // (phase depends on row-count parity so the return pass hits the rail the
+    // first pass skipped at each row, not the same one)
+    let lead2 = list.length % 2;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const S = span(list[i].ri, list[i].si);
+      const p = { x: lead2 === 0 ? S.x0 : S.x1, y: rowYs[list[i].ri] };
+      throwTo(p);
+      lead2 ^= 1;
+    }
+  };
 
-  // Manual override: "satin" / "fill" force the type; "auto" (default) chooses
-  // by component width.
-  const forced = params.stitchType;
-  for (const seed of seeds) {
-    if (visited.has(id(seed.ri, seed.si))) continue;
-    const order = walkComponent(seed.ri, seed.si);
-    let satin;
-    if (forced === "satin") satin = true;
-    else if (forced === "fill") satin = false;
-    else { const w = componentWidth(order); satin = (w <= satinMax && w >= satinMin); }
-    if (satin) emitSatin(order, subs);
-    else emitTatami(order, subs);
+  const emitTatamiSec = (sec, end) => {
+    const list = end === "A" ? sec.spans : sec.spans.slice().reverse();
+    let dir = 1;
+    {
+      // start at whichever span end is nearer to the needle
+      const S = span(list[0].ri, list[0].si);
+      if (curPt && Math.abs(curPt.x - S.x1) < Math.abs(curPt.x - S.x0)) dir = -1;
+    }
+    for (let i = 0; i < list.length; i++) {
+      const { ri, si } = list[i];
+      const S = span(ri, si);
+      const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
+      if (i === 0) connectTo(pts[0]);
+      else if (dist(curPt, pts[0]) > 0.8 && !segmentInContours(curPt, pts[0], rot)) connectTo(pts[0]);
+      else stitchTo(pts[0]);
+      for (let k = 1; k < pts.length; k++) stitchTo(pts[k]);
+      dir = -dir;
+    }
+  };
+
+  // --- sew sections nearest-first, preferring neighbors of what's already sewn
+  const remaining = new Set(sections.map((s) => s.idx));
+  const sewn = new Set();
+  while (remaining.size) {
+    let pick = null, pickEntry = null, bestCost = Infinity;
+    // prefer sections adjacent to already-sewn ones (keeps travel short)
+    let cands = [];
+    for (const sIdx of sewn) {
+      for (const n of (secAdj.get(sIdx) || [])) if (remaining.has(n)) cands.push(n);
+    }
+    if (!cands.length) cands = [...remaining];
+    for (const idx2 of cands) {
+      const sec = sections[idx2];
+      for (const e of sec.entries) {
+        const c = curPt ? dist(curPt, e.p) : e.p.y * 1000 + e.p.x; // first: topmost
+        if (c < bestCost) { bestCost = c; pick = sec; pickEntry = e.end; }
+      }
+    }
+    if (!pick) break;
+    if (pick.style === "ladder") emitLadder(pick, pickEntry);
+    else if (pick.style === "columns") emitColumns(pick, pickEntry);
+    else if (pick.style === "zigzag") emitZigzag(pick, pickEntry);
+    else emitTatamiSec(pick, pickEntry);
+    remaining.delete(pick.idx);
+    sewn.add(pick.idx);
   }
+  endChain();
 
   // Rotate every subpath back into design space.
   return subs.map((s) => s.map((p) => rotatePoint(p, center, angle)));

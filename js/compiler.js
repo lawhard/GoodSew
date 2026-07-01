@@ -114,10 +114,14 @@ export function compile() {
 
 // Short-stitch removal with corner preservation: within a continuous run of
 // stitches, drop a penetration that sits < MIN mm from the previous kept one AND
-// nearly on the line to the next (a redundant micro-stitch that just risks
-// thread breaks). Corners (a real direction change) and the first/last stitch of
-// a run are always kept, so shapes/edges — and the bounding box — are preserved.
-function removeShortStitches(plan, MIN = 0.4) {
+// lies essentially ON the line to the next (a redundant collinear micro-stitch
+// that just risks thread breaks). The collinearity band must be TIGHT: a satin
+// rail step is short (one row spacing) but anchors a direction change into the
+// next rung — with a loose band (the old `perp < MIN`) every other satin rung
+// collapsed into a diagonal, shredding satin columns into zig-zag spaghetti.
+// Corners and the first/last stitch of a run are always kept, so shapes/edges —
+// and the bounding box — are preserved.
+function removeShortStitches(plan, MIN = 0.4, BAND = 0.08) {
   const out = [];
   for (let i = 0; i < plan.length; i++) {
     const s = plan[i];
@@ -129,7 +133,7 @@ function removeShortStitches(plan, MIN = 0.4) {
       if (dAP < MIN) {
         const vx = C.x - A.x, vy = C.y - A.y, L = Math.hypot(vx, vy) || 1;
         const perp = Math.abs((s.x - A.x) * vy - (s.y - A.y) * vx) / L;
-        if (perp < MIN) continue; // redundant near-collinear micro-stitch → drop
+        if (perp < BAND) continue; // truly collinear micro-stitch → drop
       }
     }
     out.push(s);

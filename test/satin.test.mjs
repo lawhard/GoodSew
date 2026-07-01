@@ -100,9 +100,11 @@ console.log("\n=== Thin rectangle 2.5 x 30 — auto SATIN ===");
   ok(!hasBadCoord(subs), `no NaN/Infinity`);
   ok(pointsOutside(subs, [thin]) === 0, `every stitch inside region`);
 
-  // With underlay → a center-run subpath is added before the satin rails.
+  // With underlay → a center run is stitched before the satin rails (now part
+  // of the SAME chain — no trim between underlay and topping), so the total
+  // penetration count grows noticeably.
   const withU = fillContours([thin], { ...params, underlay: true });
-  ok(withU.length >= 2, `underlay adds a center-run subpath (subs=${withU.length})`);
+  ok(totalPts(withU) > totalPts(subs) * 1.2, `underlay adds a center run (${totalPts(withU)} > ${totalPts(subs)})`);
   ok(pointsOutside(withU, [thin]) === 0, `underlay: every stitch inside region`);
 }
 

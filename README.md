@@ -77,22 +77,29 @@ sensible, good-looking **default tatami fill** — no tuning required. From ther
 you can fine-tune each object's **density, stitch length, fill angle, underlay**
 and an optional **outline pass**, then simulate and export.
 
-- **Automatic stitch type** — each region is measured and stitched the right
-  way with no manual choice: narrow regions (letter stems, thin shapes, the ring
-  of an "O", ≤ ~6 mm — adjustable) become **satin** (zig-zag rail-to-rail with a
-  center-run underlay), wider regions become **tatami fill**. This is what makes
-  small lettering legible. Shapes set to **Outline** get a **satin border** band
-  around the contour instead of a filled interior.
-- **Smart tatami fill** — a connected-component serpentine: spans are
-  linked across rows so the fill is sewn as one continuous path whose
-  travel stays **inside** the shape, so concave regions (a heart's notch,
-  etc.) fill cleanly with no jump across the fold. It is fully
-  **hole-aware** — stitches never travel across letter counters (the
-  insides of **O, U, e, a, B, 8**…); the edge underlay traces only outer
-  contours, never counters. A small **pull-compensation inset** keeps
-  thread inside the outline so it doesn't bleed over edges or pinch thin
-  apertures shut. Lettering gets a lighter underlay so small text stays
-  crisp.
+- **Section-based digitizing** — like a commercial digitizer, every region is
+  first **decomposed into sections** (branch analysis): stems, bars, arcs and
+  blobs are detected where the shape splits or merges. Each section then gets
+  the stitch style that suits it:
+  - narrow ribbons (letter stems, the walls of an "O", ≤ ~6 mm — adjustable)
+    become **satin** with rungs *across* the stroke and a center-run underlay;
+  - thin **horizontal** strokes (a T's bar, an e's crossbar) get satin with
+    **vertical** rungs — the rung direction follows the stroke, so lettering
+    looks like real embroidery;
+  - wide areas become **tatami fill** (brick-offset serpentine);
+  - **forcing Satin** on a wide shape produces a true glossy diagonal
+    **zig-zag** (unmistakably satin — never fill-like rows).
+- **Boundary-aware travel** — moving between sections never stitches straight
+  across finished fill: short hops connect directly, longer ones **run along
+  the region's edge**, and anything further gets a proper tie-off + trim.
+  Concave regions (a heart's notch) fill cleanly with no jump across the fold.
+- **Hole-aware everywhere** — stitches never travel across letter counters
+  (the insides of **O, U, e, a, B, 8**…); the edge underlay traces only outer
+  contours, never counters. A small **pull-compensation inset** keeps thread
+  inside the outline so it doesn't bleed over edges or pinch thin apertures
+  shut. Lettering gets a lighter underlay so small text stays crisp. Shapes
+  set to **Outline** get a **satin border** band around the contour instead
+  of a filled interior.
 
 ### More
 - **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
