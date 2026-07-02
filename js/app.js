@@ -22,7 +22,7 @@ import { parseSVG } from "./import/svg.js";
 import { traceRaster, RASTER_MAX_DIM } from "./import/raster.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.8.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.8.1"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -575,14 +575,42 @@ function setTool(t) {
     select: "Click to select. Drag to move. Drag handles to resize, top knob to rotate. Double-click text to edit.",
     text: "Click on the canvas to drop your text, then type.",
     shape: "Pick a shape, then drag on the canvas. Hold Shift for an even shape.",
-    satin: "Click points along the column's center line. Double-click or Enter to finish, Esc to cancel.",
-    run: "Click points along the stitch path. Double-click or Enter to finish, Esc to cancel.",
-    poly: "Click the corners of your shape. Double-click or Enter to close it, Esc to cancel.",
+    satin: "Click points along the column's center line, then hit ✓ Finish (or double-click / Enter / right-click).",
+    run: "Click points along the stitch path, then hit ✓ Finish (or double-click / Enter / right-click).",
+    poly: "Click the corners of your shape, then hit ✓ Finish (or click the first point / double-click / Enter).",
   };
   $("hud-hint").textContent = hints[t] || "";
   canvas.style.cursor = t === "select" ? "default" : "crosshair";
-  if (t !== "satin" && t !== "run" && t !== "poly") drawing = null;
+  if (t !== "satin" && t !== "run" && t !== "poly") {
+    // Leaving a draw tool commits the in-progress drawing instead of silently
+    // throwing away the user's clicks (cancel is Esc / the ✕ button).
+    if (drawing) finishDrawing({ switchTool: false, quiet: true });
+  }
+  updateDrawBar();
+  updateEmptyHint();
   if (t === "shape") openShapePopover();
+}
+
+// The floating "N points — ✓ Finish / ✕ Cancel" bar shown while drawing.
+function updateDrawBar() {
+  const active = state.mode === "design" && (tool === "satin" || tool === "run" || tool === "poly");
+  $("draw-bar").classList.toggle("hidden", !active);
+  if (!active) return;
+  const n = drawing ? drawing.points.length : 0;
+  const need = tool === "poly" ? 3 : 2;
+  $("draw-bar-msg").textContent = n === 0
+    ? (tool === "poly" ? "Click the corners of your shape" : "Click points on the canvas")
+    : n < need
+      ? `${n} point${n === 1 ? "" : "s"} — place at least ${need}`
+      : `${n} points`;
+  $("draw-finish").disabled = n < need;
+}
+
+
+function cancelDrawing() {
+  drawing = null;
+  updateDrawBar();
+  needsRender = true;
 }
 
 // ----------------------------------------------------------------- creators
@@ -614,7 +642,7 @@ function addShape(kind, box) {
 // Turn the in-progress manual drawing into a real object. Satin lines become
 // proper satin columns (spine + width), Run lines become running stitch, and
 // Regions become ordinary fill shapes with the full stitch settings.
-function finishDrawing() {
+function finishDrawing({ switchTool = true, quiet = false } = {}) {
   if (!drawing) return;
   // drop double-click / accidental duplicate points
   const pts = [];
@@ -625,7 +653,10 @@ function finishDrawing() {
   const type = drawing.type;
   drawing = null;
   const need = type === "poly" ? 3 : 2;
-  if (pts.length < need) { toast(type === "poly" ? "Click at least 3 corners." : "Click at least 2 points.", true); needsRender = true; return; }
+  if (pts.length < need) {
+    if (!quiet) toast(type === "poly" ? "Click at least 3 corners." : "Click at least 2 points.", true);
+    updateDrawBar(); needsRender = true; return;
+  }
 
   let obj;
   if (type === "satin") {
@@ -640,7 +671,9 @@ function finishDrawing() {
   }
   state.objects.push(obj);
   setSel([obj.id]);
-  setTool("select");
+  if (switchTool) setTool("select");
+  else updateDrawBar();
+  toast(`${obj.name} added — ${pts.length} points.`);
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); commit(); needsRender = true;
 }
 
@@ -670,7 +703,7 @@ function selectionHandlesScreen(obj) {
 const OPP = { nw: "se", ne: "sw", se: "nw", sw: "ne", n: "s", s: "n", e: "w", w: "e" };
 
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button === 2) return;
+  if (e.button === 2) { if (drawing) finishDrawing(); return; }
   const world = mouseWorld(e);
   const mx = e.offsetX, my = e.offsetY;
 
@@ -709,10 +742,21 @@ canvas.addEventListener("mousedown", (e) => {
   }
   if (tool === "text") { addText(world); return; }
 
-  // Manual digitizing: click to place points; finish on double-click / Enter.
+  // Manual digitizing: click to place points. Finishing works several ways so
+  // it can't be missed: the ✓ Finish button, double-click (detected here via
+  // e.detail — more reliable than the dblclick event), Enter, right-click, or
+  // clicking back on the first/last placed point.
   if (tool === "satin" || tool === "run" || tool === "poly") {
+    if (drawing && e.detail >= 2) { finishDrawing(); return; }
+    if (drawing && drawing.points.length >= (tool === "poly" ? 3 : 2)) {
+      const first = cam.toScreen(drawing.points[0]);
+      const last = cam.toScreen(drawing.points[drawing.points.length - 1]);
+      const m = { x: mx, y: my };
+      if (dist(first, m) <= HANDLE_HIT || dist(last, m) <= HANDLE_HIT) { finishDrawing(); return; }
+    }
     if (!drawing) drawing = { type: tool, points: [] };
     drawing.points.push({ x: world.x, y: world.y });
+    updateDrawBar();
     needsRender = true;
     return;
   }
@@ -1062,7 +1106,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === " ") spaceDown = true;
   if (drawing) {
     if (e.key === "Enter") { finishDrawing(); e.preventDefault(); return; }
-    if (e.key === "Escape") { drawing = null; needsRender = true; e.preventDefault(); return; }
+    if (e.key === "Escape") { cancelDrawing(); e.preventDefault(); return; }
   }
 
   // Arrow keys fine-tune the selected object(s). Default 0.5 mm steps; hold
@@ -1771,6 +1815,8 @@ $("btn-reset").onclick = () => {
   resetHistory(); needsRender = true;
   toast("Reset to the sample design");
 };
+$("draw-finish").onclick = () => finishDrawing();
+$("draw-cancel").onclick = () => { cancelDrawing(); setTool("select"); };
 $("file-svg").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   importLogoFile(f);
@@ -1860,6 +1906,7 @@ $("btn-3d").onclick = async () => {
       scrub: $("view3d-scrub"),
       speed: $("view3d-speed"),
       counter: $("view3d-counter"),
+      views: $("view3d-views"),
     });
     window.__gs3d = true;
   } catch (err) {
@@ -1913,7 +1960,8 @@ function toast(msg, isError) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.add("hidden"), 3200);
 }
 function updateEmptyHint() {
-  $("empty-hint").style.display = (state.mode === "design" && state.objects.length === 0) ? "block" : "none";
+  const drawToolActive = tool === "satin" || tool === "run" || tool === "poly";
+  $("empty-hint").style.display = (state.mode === "design" && state.objects.length === 0 && !drawToolActive) ? "block" : "none";
 }
 function updateSimColor(s) {
   const host = $("sim-color");

@@ -131,6 +131,18 @@ body[data-mode="stitch"] .mode-design { display: none !important; }
 }
 .empty-hint b { color: var(--text); }
 
+/* Floating Finish/Cancel bar shown while a Draw tool is placing points */
+.draw-bar {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 15;
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 9px;
+  padding: 7px 10px 7px 14px; font-size: 12.5px; box-shadow: var(--shadow);
+}
+.draw-bar.hidden { display: none !important; }
+.draw-bar #draw-bar-msg { color: var(--text); white-space: nowrap; }
+.draw-bar .btn { padding: 4px 12px; }
+.draw-bar .btn:disabled { opacity: 0.45; cursor: default; }
+
 .text-editor {
   position: absolute; z-index: 20; transform: translate(-2px, -2px);
   border: 2px solid var(--accent); border-radius: 4px; background: var(--panel);
@@ -227,6 +239,11 @@ body[data-mode="stitch"] .mode-design { display: none !important; }
 .view3d-foot .sim-scrub { flex: 1; }
 .view3d-speed { width: 110px; }
 .view3d-counter { min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+.view3d-views { display: flex; gap: 6px; margin-left: auto; margin-right: 10px; }
+.view3d-views .btn { padding: 5px 11px; font-size: 12px; }
+.view3d-views .btn.active { border-color: var(--accent); color: var(--accent); }
+.modal-card-3d .modal-head h2 { margin-right: 12px; }
+.modal-card-3d .modal-head .muted { font-size: 12px; font-weight: 400; }
 
 .color-row { display: flex; align-items: center; gap: 8px; }
 .color-dot { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border); }

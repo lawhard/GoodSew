@@ -25,34 +25,34 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.8.0" />
+  <link rel="stylesheet" href="css/styles.css?v=0.8.1" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.8.0",
-      "./js/hoop.js": "./js/hoop.js?v=0.8.0",
-      "./js/threads.js": "./js/threads.js?v=0.8.0",
-      "./js/compiler.js": "./js/compiler.js?v=0.8.0",
-      "./js/stats.js": "./js/stats.js?v=0.8.0",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.8.0",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.8.0",
-      "./js/render.js": "./js/render.js?v=0.8.0",
-      "./js/simulator.js": "./js/simulator.js?v=0.8.0",
-      "./js/geometry.js": "./js/geometry.js?v=0.8.0",
-      "./js/shapes.js": "./js/shapes.js?v=0.8.0",
-      "./js/fonts.js": "./js/fonts.js?v=0.8.0",
-      "./js/units.js": "./js/units.js?v=0.8.0",
-      "./js/preview.js": "./js/preview.js?v=0.8.0",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.8.0",
-      "./js/import/raster.js": "./js/import/raster.js?v=0.8.0",
-      "./js/qa.js": "./js/qa.js?v=0.8.0",
-      "./js/stitches.js": "./js/stitches.js?v=0.8.0",
-      "./js/view3d.js": "./js/view3d.js?v=0.8.0",
-      "three": "./vendor/three.module.min.js?v=0.8.0",
-      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.8.0"
+      "./js/state.js": "./js/state.js?v=0.8.1",
+      "./js/hoop.js": "./js/hoop.js?v=0.8.1",
+      "./js/threads.js": "./js/threads.js?v=0.8.1",
+      "./js/compiler.js": "./js/compiler.js?v=0.8.1",
+      "./js/stats.js": "./js/stats.js?v=0.8.1",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.8.1",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.8.1",
+      "./js/render.js": "./js/render.js?v=0.8.1",
+      "./js/simulator.js": "./js/simulator.js?v=0.8.1",
+      "./js/geometry.js": "./js/geometry.js?v=0.8.1",
+      "./js/shapes.js": "./js/shapes.js?v=0.8.1",
+      "./js/fonts.js": "./js/fonts.js?v=0.8.1",
+      "./js/units.js": "./js/units.js?v=0.8.1",
+      "./js/preview.js": "./js/preview.js?v=0.8.1",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.8.1",
+      "./js/import/raster.js": "./js/import/raster.js?v=0.8.1",
+      "./js/qa.js": "./js/qa.js?v=0.8.1",
+      "./js/stitches.js": "./js/stitches.js?v=0.8.1",
+      "./js/view3d.js": "./js/view3d.js?v=0.8.1",
+      "three": "./vendor/three.module.min.js?v=0.8.1",
+      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.8.1"
     }
   }
   </script>
@@ -147,11 +147,16 @@
         <span id="hud-zoom">100%</span>
         <span id="hud-hint"></span>
       </div>
+      <div id="draw-bar" class="draw-bar hidden">
+        <span id="draw-bar-msg">Click to place points</span>
+        <button id="draw-finish" class="btn btn-primary" title="Finish (Enter, double-click, or right-click)">✓ Finish</button>
+        <button id="draw-cancel" class="btn" title="Cancel (Esc)">✕ Cancel</button>
+      </div>
       <div id="empty-hint" class="empty-hint">
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.8.0</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.8.1</div>
     </main>
 
     <!-- Right -->
@@ -274,7 +279,13 @@
   <div id="view3d-modal" class="modal hidden">
     <div class="modal-card modal-card-3d">
       <div class="modal-head">
-        <h2>3D Stitch View <span class="muted">— drag to orbit · scroll to zoom · shift-drag to pan</span></h2>
+        <h2>3D Stitch View <span class="muted">— drag to orbit · scroll to zoom · right-drag to pan · double-click to recenter</span></h2>
+        <div id="view3d-views" class="view3d-views">
+          <button class="btn" data-view="home" title="Reset to the ¾ overview of the design">⌂ Reset</button>
+          <button class="btn" data-view="top" title="Look straight down">Top</button>
+          <button class="btn" data-view="front" title="Low front angle">Front</button>
+          <button class="btn" data-view="hoop" title="Zoom out to the whole hoop">Hoop</button>
+        </div>
         <button id="view3d-close" class="btn">✕ Close</button>
       </div>
       <div id="view3d-stage" class="view3d-stage"></div>
@@ -295,6 +306,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.8.0"></script>
+  <script type="module" src="js/app.js?v=0.8.1"></script>
 </body>
 </html>

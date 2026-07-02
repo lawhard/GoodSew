@@ -254,6 +254,17 @@ function drawDraft(ctx, cam, d) {
     const s = cam.toScreen(p);
     ctx.beginPath(); ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2); ctx.fill();
   }
+  // once the drawing is finishable, ring the click-to-finish target (the
+  // first corner for regions, the last point for lines)
+  const need = d.type === "poly" ? 3 : 2;
+  if (d.points.length >= need) {
+    const t = cam.toScreen(d.type === "poly" ? d.points[0] : d.points[d.points.length - 1]);
+    ctx.beginPath(); ctx.arc(t.x, t.y, 8, 0, Math.PI * 2);
+    ctx.lineWidth = 2; ctx.strokeStyle = "#fff";
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(t.x, t.y, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#fff"; ctx.fill();
+  }
   ctx.restore();
 }
 

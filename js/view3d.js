@@ -156,33 +156,62 @@ export function open3DView(compiled, hoop, ui) {
 
   const camera = new THREE.PerspectiveCamera(38, W / H, 1, 2000);
 
-  // minimal orbit controls (rotate / wheel-zoom / pan) — start framed on the
-  // DESIGN (true hoop position), not the whole hoop
+  // ------------- navigation: smooth damped orbit around a movable target ----
+  // Start framed on the DESIGN (true hoop position), not the whole hoop.
+  // `goal` is where the user is steering; `cur` eases toward it every frame,
+  // which makes rotate/zoom feel fluid instead of twitchy.
   const bb = compiled.bounds;
   const designW = Math.max(10, bb.maxX - bb.minX), designH = Math.max(10, bb.maxY - bb.minY);
-  const orbit = {
+  const home = {
     theta: -0.35, phi: 0.95,
     dist: Math.min(360, Math.max(45, Math.max(designW, designH) * 2.6)),
     tx: (bb.minX + bb.maxX) / 2 - hoop.w / 2,
     ty: -((bb.minY + bb.maxY) / 2 - hoop.h / 2),
   };
+  const goal = { ...home };
+  const cur = { ...home };
+  const clampView = () => {
+    goal.phi = Math.max(0.04, Math.min(1.52, goal.phi));
+    goal.dist = Math.max(8, Math.min(700, goal.dist));
+    const lim = Math.max(hoop.w, hoop.h) * 1.2; // keep the hoop in reach
+    goal.tx = Math.max(-lim, Math.min(lim, goal.tx));
+    goal.ty = Math.max(-lim, Math.min(lim, goal.ty));
+  };
   const applyCam = () => {
-    const sp = Math.sin(orbit.phi), cp = Math.cos(orbit.phi);
+    const sp = Math.sin(cur.phi), cp = Math.cos(cur.phi);
     camera.position.set(
-      orbit.tx + orbit.dist * sp * Math.sin(orbit.theta),
-      orbit.ty - orbit.dist * sp * Math.cos(orbit.theta),
-      orbit.dist * cp
+      cur.tx + cur.dist * sp * Math.sin(cur.theta),
+      cur.ty - cur.dist * sp * Math.cos(cur.theta),
+      cur.dist * cp
     );
     camera.up.set(0, 0, 1);
-    camera.lookAt(orbit.tx, orbit.ty, 0);
+    camera.lookAt(cur.tx, cur.ty, 0);
   };
   applyCam();
+
+  // Where the pointer ray hits the fabric plane (z=0) — the anchor for
+  // grab-the-fabric panning, cursor-centred zoom, and dblclick recentring.
+  const raycaster = new THREE.Raycaster();
+  const fabricPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const planePoint = (clientX, clientY) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    raycaster.setFromCamera(new THREE.Vector2(
+      ((clientX - r.left) / r.width) * 2 - 1,
+      -(((clientY - r.top) / r.height) * 2 - 1)
+    ), camera);
+    const pt = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(fabricPlane, pt) ? pt : null;
+  };
 
   let dragging = null;
   const el = renderer.domElement;
   el.style.touchAction = "none";
+  el.style.cursor = "grab";
   el.addEventListener("pointerdown", (e) => {
-    dragging = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+    const pan = e.button === 2 || e.button === 1 || e.shiftKey;
+    dragging = { x: e.clientX, y: e.clientY, pan, grab: pan ? planePoint(e.clientX, e.clientY) : null };
+    el.style.cursor = pan ? "move" : "grabbing";
     el.setPointerCapture(e.pointerId);
   });
   el.addEventListener("pointermove", (e) => {
@@ -190,22 +219,62 @@ export function open3DView(compiled, hoop, ui) {
     const dx = e.clientX - dragging.x, dy = e.clientY - dragging.y;
     dragging.x = e.clientX; dragging.y = e.clientY;
     if (dragging.pan) {
-      const s = orbit.dist / 600;
-      orbit.tx -= dx * s * Math.cos(orbit.theta) + dy * s * Math.sin(orbit.theta) * Math.cos(orbit.phi);
-      orbit.ty -= -dx * s * Math.sin(orbit.theta) + dy * s * Math.cos(orbit.theta) * Math.cos(orbit.phi);
+      // grab-the-fabric: keep the grabbed spot pinned under the cursor. Pan is
+      // applied to cur AND goal so it tracks the pointer exactly (no lag).
+      const p = dragging.grab && planePoint(e.clientX, e.clientY);
+      if (p && dragging.grab) {
+        const mx = dragging.grab.x - p.x, my = dragging.grab.y - p.y;
+        cur.tx += mx; cur.ty += my; goal.tx = cur.tx; goal.ty = cur.ty;
+        clampView();
+        cur.tx = goal.tx; cur.ty = goal.ty;
+        applyCam();
+      }
     } else {
-      orbit.theta += dx * 0.006;
-      orbit.phi = Math.max(0.08, Math.min(1.45, orbit.phi - dy * 0.006));
+      // rotate speed scales with viewport so a half-screen drag ≈ half a turn
+      const k = 3.2 / Math.max(300, el.clientWidth);
+      goal.theta += dx * k;
+      goal.phi -= dy * k;
+      clampView();
     }
-    applyCam();
   });
-  el.addEventListener("pointerup", () => { dragging = null; });
+  const endDrag = () => { dragging = null; el.style.cursor = "grab"; };
+  el.addEventListener("pointerup", endDrag);
+  el.addEventListener("pointercancel", endDrag);
   el.addEventListener("wheel", (e) => {
     e.preventDefault();
-    orbit.dist = Math.max(12, Math.min(600, orbit.dist * Math.exp(e.deltaY * 0.0012)));
-    applyCam();
+    let dy = e.deltaY;
+    if (e.deltaMode === 1) dy *= 16; else if (e.deltaMode === 2) dy *= el.clientHeight;
+    dy = Math.max(-60, Math.min(60, dy));
+    const prev = goal.dist;
+    goal.dist = Math.max(8, Math.min(700, prev * Math.exp(dy * 0.0016)));
+    // cursor-centred zoom: pull the target toward the spot under the pointer
+    const f = goal.dist / prev;
+    const p = planePoint(e.clientX, e.clientY);
+    if (p && f < 1) {
+      goal.tx = p.x + (goal.tx - p.x) * f;
+      goal.ty = p.y + (goal.ty - p.y) * f;
+    }
+    clampView();
   }, { passive: false });
+  el.addEventListener("dblclick", (e) => {
+    const p = planePoint(e.clientX, e.clientY);
+    if (p) { goal.tx = p.x; goal.ty = p.y; goal.dist = Math.max(24, goal.dist * 0.55); clampView(); }
+  });
   el.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // preset views (buttons in the modal header)
+  const hoopDist = Math.max(hoop.w, hoop.h) * 2.2;
+  const setView = (name) => {
+    if (name === "home") Object.assign(goal, home);
+    else if (name === "top") Object.assign(goal, { theta: 0, phi: 0.04, dist: home.dist, tx: home.tx, ty: home.ty });
+    else if (name === "front") Object.assign(goal, { theta: 0, phi: 1.38, dist: home.dist, tx: home.tx, ty: home.ty });
+    else if (name === "hoop") Object.assign(goal, { theta: -0.35, phi: 0.75, dist: hoopDist, tx: 0, ty: 0 });
+    // unwind any full turns so the camera takes the short way around
+    cur.theta = goal.theta + ((cur.theta - goal.theta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+    clampView();
+  };
+  const viewBtns = ui.views ? [...ui.views.querySelectorAll("[data-view]")] : [];
+  viewBtns.forEach((b) => { b.onclick = () => setView(b.dataset.view); });
 
   // playback state
   const segsPerStitch = total; // slider domain
@@ -229,12 +298,20 @@ export function open3DView(compiled, hoop, ui) {
   setShown(total);
 
   let raf = 0;
+  const DAMP = 0.16; // ease factor per frame — smooth but responsive
   const loop = () => {
     if (state3d.playing) {
       const next = state3d.shown + state3d.speed;
       setShown(next);
       if (state3d.shown >= total) { state3d.playing = false; ui.play.textContent = "▶"; }
     }
+    // ease the camera toward its goal (rotation, zoom, and preset moves)
+    cur.theta += (goal.theta - cur.theta) * DAMP;
+    cur.phi += (goal.phi - cur.phi) * DAMP;
+    cur.dist += (goal.dist - cur.dist) * DAMP;
+    cur.tx += (goal.tx - cur.tx) * DAMP;
+    cur.ty += (goal.ty - cur.ty) * DAMP;
+    applyCam();
     renderer.render(scene, camera);
     raf = requestAnimationFrame(loop);
   };
