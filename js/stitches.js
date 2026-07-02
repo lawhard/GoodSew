@@ -5,8 +5,8 @@
 import {
   resample, pathLength, sub, add, scale, norm, perp, dist, bbox,
   rotatePoint, sampleAt, contoursScanline, contoursBBox,
-  segmentInContours, classifyHoles, offsetContourInward, offsetContourSigned,
-  pointInContours,
+  segmentInContours, segmentAvoids, classifyHoles, offsetContourInward,
+  offsetContourSigned, pointInContours,
 } from "./geometry.js";
 
 // --- Running stitch: evenly spaced stitches along the polyline. ---
@@ -74,7 +74,7 @@ export function generateFill(points, params) {
 // become too short to stitch after the inset are dropped (the inset is skipped
 // for a span only implicitly — short features just lose that row, never the
 // whole feature).
-export function fillContours(contours, params) {
+export function fillContours(contours, params, occluders = []) {
   contours = contours.filter((c) => c.length >= 3);
   if (contours.length === 0) return [];
   const spacing = Math.max(0.25, params.spacing ?? 0.4);
@@ -92,6 +92,21 @@ export function fillContours(contours, params) {
   const rot = contours.map((poly) => poly.map((p) => rotatePoint(p, center, -angle)));
   const rb = contoursBBox(rot);
 
+  // Overlap knockout: regions of objects stacked ABOVE this one (each an
+  // even-odd contour set) are cut out of the fill so stacked designs sew flat
+  // instead of double-stitching. The cut is shrunk by UNDERLAP so this fill
+  // still tucks slightly under the upper object's edge — no fabric gap.
+  const occRot = (occluders || []).map((reg) => reg.map((poly) => poly.map((p) => rotatePoint(p, center, -angle))));
+  const UNDERLAP = 0.4;
+  // Travel/connector guard: inside our region AND clear of every occluder
+  // (a connector routed through a knocked-out zone could end up stitched on
+  // top of the covering object, depending on sew order).
+  const segIn = (a, b) => {
+    if (!segmentInContours(a, b, rot)) return false;
+    for (const reg of occRot) if (!segmentAvoids(a, b, reg)) return false;
+    return true;
+  };
+
   // rows[i] = array of spans; spans[k] = { x0, x1 } (x0 < x1, already inset).
   // rowYs[i] = scan y of rows[i]; rowIdxs[i] = its index in the full scan order
   // (used to detect non-adjacent rows so a row fully removed by inset breaks
@@ -102,13 +117,47 @@ export function fillContours(contours, params) {
   const rowIdxs = [];
   for (let y = rb.minY + spacing / 2; y < rb.maxY; y += spacing) {
     const xs = contoursScanline(rot, y);
-    const spans = [];
+    let spans = [];
     for (let k = 0; k + 1 < xs.length; k += 2) {
       let x0 = xs[k], x1 = xs[k + 1];
       if (x1 - x0 <= 1e-6) continue;
       // Inset both ends; drop spans that collapse below the stitchable minimum.
       const ix0 = x0 + inset, ix1 = x1 - inset;
       if (ix1 - ix0 >= minSpan) spans.push({ x0: ix0, x1: ix1 });
+    }
+    // knockout: subtract the union of occluder intervals (shrunk by UNDERLAP)
+    if (spans.length && occRot.length) {
+      const cuts = [];
+      for (const reg of occRot) {
+        const oxs = contoursScanline(reg, y);
+        for (let k = 0; k + 1 < oxs.length; k += 2) {
+          const c0 = oxs[k] + UNDERLAP, c1 = oxs[k + 1] - UNDERLAP;
+          if (c1 > c0) cuts.push([c0, c1]);
+        }
+      }
+      if (cuts.length) {
+        cuts.sort((p, q) => p[0] - q[0]);
+        const merged = [];
+        for (const c of cuts) {
+          const m = merged[merged.length - 1];
+          if (m && c[0] <= m[1]) m[1] = Math.max(m[1], c[1]); else merged.push(c);
+        }
+        const out = [];
+        for (const s of spans) {
+          let segs = [[s.x0, s.x1]];
+          for (const [c0, c1] of merged) {
+            const nx = [];
+            for (const [a, b] of segs) {
+              if (c1 <= a || c0 >= b) { nx.push([a, b]); continue; }
+              if (c0 > a) nx.push([a, c0]);
+              if (c1 < b) nx.push([c1, b]);
+            }
+            segs = nx;
+          }
+          for (const [a, b] of segs) if (b - a >= minSpan) out.push({ x0: a, x1: b });
+        }
+        spans = out;
+      }
     }
     if (spans.length) { rows.push(spans); rowYs.push(y); rowIdxs.push(rowIndex); }
     rowIndex++;
@@ -158,7 +207,7 @@ export function fillContours(contours, params) {
         const ov = Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0);
         if (ov <= 1e-6) continue;
         const sx = (Math.max(A.x0, B.x0) + Math.min(A.x1, B.x1)) / 2;
-        if (segmentInContours({ x: sx, y: rowYs[ri] }, { x: sx, y: rowYs[ri + 1] }, rot)) {
+        if (segIn({ x: sx, y: rowYs[ri] }, { x: sx, y: rowYs[ri + 1] })) {
           addAdj(id(ri, si), { ri: ri + 1, si: sj });
           addAdj(id(ri + 1, sj), { ri, si });
         }
@@ -332,7 +381,7 @@ export function fillContours(contours, params) {
     // Direct interior travel only for SHORT hops (a long stitched connector
     // lies visibly on top of the finished fill); anything longer goes along
     // the boundary or gets a trim.
-    if (d <= 2.5 && segmentInContours(curPt, target, rot)) {
+    if (d <= 2.5 && segIn(curPt, target)) {
       if (d <= 1.0) { stitchTo(target); return; }
       const pts = resample([curPt, target], stitchLen);
       for (let i = 1; i < pts.length; i++) stitchTo(pts[i]);
@@ -343,8 +392,9 @@ export function fillContours(contours, params) {
     // verified too: at a pinch (a notch tip) the nearest outline point can lie
     // on the far flank, and the chord would cut straight across the vee.
     if (walk && walk.length &&
-        segmentInContours(curPt, walk[0], rot) &&
-        segmentInContours(walk[walk.length - 1], target, rot)) {
+        segIn(curPt, walk[0]) &&
+        segIn(walk[walk.length - 1], target) &&
+        walk.every((p, i) => i === 0 || segIn(walk[i - 1], p))) {
       for (const p of walk) stitchTo(p);   // fine steps: chords stay inside
       if (dist(curPt, target) > 1e-9) stitchTo(target);
       return;
@@ -381,14 +431,14 @@ export function fillContours(contours, params) {
       // near-degenerate span (a tapering tip): one penetration, no rung
       if (S.x1 - S.x0 < 0.5) {
         const m = { x: (S.x0 + S.x1) / 2, y };
-        if (dist(curPt, m) > 0.8 && !segmentInContours(curPt, m, rot)) connectTo(m);
+        if (dist(curPt, m) > 0.8 && !segIn(curPt, m)) connectTo(m);
         else stitchTo(m);
         continue;
       }
       const a = { x: lead === 0 ? S.x0 : S.x1, y };
       // rail step: adjacent rows are interior-linked, but on a fast-drifting
       // edge the step can get long — verify, and reroute if it would exit.
-      if (dist(curPt, a) > 0.8 && !segmentInContours(curPt, a, rot)) connectTo(a);
+      if (dist(curPt, a) > 0.8 && !segIn(curPt, a)) connectTo(a);
       else stitchTo(a);
       throwTo({ x: lead === 0 ? S.x1 : S.x0, y });
       lead ^= 1;
@@ -422,7 +472,7 @@ export function fillContours(contours, params) {
     let lead = 0;
     for (const c of cols) {
       const a = { x: c.x, y: lead === 0 ? c.y0 : c.y1 };
-      if (dist(curPt, a) > 0.8 && !segmentInContours(curPt, a, rot)) connectTo(a);
+      if (dist(curPt, a) > 0.8 && !segIn(curPt, a)) connectTo(a);
       else stitchTo(a);
       throwTo({ x: c.x, y: lead === 0 ? c.y1 : c.y0 });
       lead ^= 1;
@@ -467,7 +517,7 @@ export function fillContours(contours, params) {
       const S = span(ri, si);
       const pts = spanPoints(S.x0, S.x1, rowYs[ri], rowIdxs[ri], dir);
       if (i === 0) connectTo(pts[0]);
-      else if (dist(curPt, pts[0]) > 0.8 && !segmentInContours(curPt, pts[0], rot)) connectTo(pts[0]);
+      else if (dist(curPt, pts[0]) > 0.8 && !segIn(curPt, pts[0])) connectTo(pts[0]);
       else stitchTo(pts[0]);
       for (let k = 1; k < pts.length; k++) stitchTo(pts[k]);
       dir = -dir;
@@ -632,13 +682,18 @@ function generateBorder(contours, params) {
 // letters, sewing a visible thread straight over the aperture. Mark any close
 // join whose straight connector leaves the region so the compiler trims there
 // instead of gluing across.
-export function markUnsafeJoins(subs, contours) {
+export function markUnsafeJoins(subs, contours, occluders = []) {
+  const safe = (a, b) => {
+    if (!segmentInContours(a, b, contours)) return false;
+    for (const reg of occluders) if (!segmentAvoids(a, b, reg)) return false;
+    return true;
+  };
   for (let i = 1; i < subs.length; i++) {
     const A = subs[i - 1], B = subs[i];
     if (!A.length || !B.length) continue;
     const a = A[A.length - 1], b = B[0];
     const gap = dist(a, b);
-    if (gap > 1e-9 && gap <= 3.2 && !segmentInContours(a, b, contours)) {
+    if (gap > 1e-9 && gap <= 3.2 && !safe(a, b)) {
       B._trimBefore = true;
     }
   }
@@ -648,7 +703,7 @@ export function markUnsafeJoins(subs, contours) {
 // Generate stitches for a text object from its cached glyph contours
 // (obj._glyphs: array of glyphs; each glyph is an array of contours in mm).
 // Returns an array of sub-paths so the compiler can trim/jump between glyphs.
-export function generateText(obj) {
+export function generateText(obj, occluders = []) {
   const glyphs = obj._glyphs || [];
   const ax = (obj.points && obj.points[0]) ? obj.points[0].x : 0;
   const ay = (obj.points && obj.points[0]) ? obj.points[0].y : 0;
@@ -663,19 +718,19 @@ export function generateText(obj) {
     // stay open. The OUTLINE pass (params.outline) is handled inside
     // fillWithUnderlay now — hole-aware (counters not ringed) and inset just
     // inside the edge — so it is shared by text, shapes, and SVG fills.
-    for (const f of fillWithUnderlay(moved, obj.params, { light: true })) {
+    for (const f of fillWithUnderlay(moved, obj.params, { light: true, occluders })) {
       if (f.length) subs.push(f);
     }
   }
   // Re-check joins across the WHOLE text: two letters can sit < 3mm apart, and
   // the compiler would otherwise stitch straight across the gap between them
   // (or across a counter at a glyph boundary).
-  return markUnsafeJoins(subs, allContours);
+  return markUnsafeJoins(subs, allContours, occluders);
 }
 
 // Returns an array of sub-paths (each an array of penetration points). Multiple
 // sub-paths within one object are connected by jumps/trims by the compiler.
-export function generateForObject(obj) {
+export function generateForObject(obj, occluders = []) {
   switch (obj.type) {
     case "running": return [generateRunning(obj.points, obj.params)];
     case "satin": {
@@ -691,9 +746,9 @@ export function generateForObject(obj) {
       // the interior. Hole-aware — each contour (counter included) is bordered
       // independently, so an outline 'O' gets two rings and an open center.
       if (obj.params.fillMode === "outline") return generateBorder(contours, obj.params);
-      return fillWithUnderlay(contours, obj.params);
+      return fillWithUnderlay(contours, obj.params, { occluders });
     }
-    case "text":    return generateText(obj);
+    case "text":    return generateText(obj, occluders);
     default:        return [];
   }
 }
@@ -719,7 +774,21 @@ function fillWithUnderlay(contours, params, opts = {}) {
   const topAngle = params.angle ?? 0;
   const topSpacing = Math.max(0.25, params.spacing ?? 0.4);
   const light = !!opts.light;
+  const occl = opts.occluders || [];
   const subs = [];
+
+  // Clip an edge-walk run out of the zones covered by objects stacked above:
+  // split into pieces wherever a point falls inside an occluder region.
+  const pushClipped = (pts) => {
+    if (!occl.length) { if (pts.length >= 2) subs.push(pts); return; }
+    let cur = [];
+    for (const p of pts) {
+      const covered = occl.some((reg) => pointInContours(p, reg));
+      if (covered) { if (cur.length >= 2) subs.push(cur); cur = []; }
+      else cur.push(p);
+    }
+    if (cur.length >= 2) subs.push(cur);
+  };
 
   const inset = Math.max(0, params.inset ?? 0.2);
   if (params.underlay) {
@@ -729,7 +798,7 @@ function fillWithUnderlay(contours, params, opts = {}) {
     //     and never bleeds over the edge. Never walk holes/counters, or the
     //     counter gets ringed shut.
     for (let i = 0; i < valid.length; i++) {
-      if (!isHole[i]) subs.push(edgeWalk(valid[i], 2.5, inset, valid));
+      if (!isHole[i]) pushClipped(edgeWalk(valid[i], 2.5, inset, valid));
     }
     // (b) Perpendicular low-density stabilizing fill (hole-aware) — shapes only.
     if (!light) {
@@ -739,7 +808,7 @@ function fillWithUnderlay(contours, params, opts = {}) {
         spacing: Math.max(1.8, topSpacing * 4),
         stitchLength: Math.max(2.5, params.stitchLength ?? 3.0),
         angle: topAngle + 90,
-      })) {
+      }, occl)) {
         if (f.length) subs.push(f);
       }
     }
@@ -751,12 +820,12 @@ function fillWithUnderlay(contours, params, opts = {}) {
   if (params.crosshatch) {
     const gap = topSpacing * 1.7; // each pass sparser; the two together look right
     for (const ang of [topAngle, topAngle + 90]) {
-      for (const f of fillContours(valid, { ...params, stitchType: "fill", crosshatch: false, spacing: gap, stitchLength: len, angle: ang })) {
+      for (const f of fillContours(valid, { ...params, stitchType: "fill", crosshatch: false, spacing: gap, stitchLength: len, angle: ang }, occl)) {
         if (f.length) subs.push(f);
       }
     }
   } else {
-    for (const f of fillContours(valid, { ...params, spacing: topSpacing, stitchLength: len, angle: topAngle })) {
+    for (const f of fillContours(valid, { ...params, spacing: topSpacing, stitchLength: len, angle: topAngle }, occl)) {
       if (f.length) subs.push(f);
     }
   }
@@ -772,10 +841,10 @@ function fillWithUnderlay(contours, params, opts = {}) {
     for (let i = 0; i < valid.length; i++) {
       if (isHole[i]) continue;
       const o = edgeWalk(valid[i], olen, inset, valid);
-      if (o.length) subs.push(o);
+      if (o.length) pushClipped(o);
     }
   }
   // Joins between passes (underlay → fill → outline / cross-hatch passes) can
   // sit close together yet across a counter — mark them so the compiler trims.
-  return markUnsafeJoins(subs, valid);
+  return markUnsafeJoins(subs, valid, occl);
 }

@@ -350,6 +350,8 @@ export function traceRaster(img, hoop, opts = {}) {
   return { items, box };
 }
 
-// Downscale helper for the app side: cap the working resolution so tracing is
-// fast and detail matches what thread can actually reproduce.
-export const RASTER_MAX_DIM = 280;
+// Working-resolution cap for the app side. 512px on the long side keeps
+// tracing fast while giving contours ~4× the detail of the old 280px cap —
+// at an 80mm stitch-out that's ~0.16mm per pixel, finer than thread itself,
+// so curves come out smooth instead of chunky.
+export const RASTER_MAX_DIM = 512;

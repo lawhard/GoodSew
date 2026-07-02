@@ -8,9 +8,34 @@
 //   cmd:   'stitch' | 'jump' | 'trim' | 'color' | 'end'
 //   color: index into plan.colors (the thread block this entry belongs to)
 
-import { colorBlocks } from "./state.js";
+import { colorBlocks, state } from "./state.js";
 import { generateForObject } from "./stitches.js";
 import { dist, sub, norm, add, scale, bbox } from "./geometry.js";
+
+// Overlap knockout: the regions of FILL objects stacked ABOVE `obj` in the
+// layer order (later in state.objects = drawn on top = covers the fabric).
+// The generator cuts these out of obj's fill so stacked designs sew flat
+// instead of double-stitching. Text and outline-only objects never knock out
+// (small lettering/borders are stitched ON TOP of fill, the standard
+// embroidery practice), nor do tiny detail pieces (< ~25 mm²).
+function occludersFor(obj) {
+  const order = state.objects;
+  const i = order.indexOf(obj);
+  if (i < 0) return [];
+  const out = [];
+  for (let j = i + 1; j < order.length; j++) {
+    const o = order[j];
+    if (!o.visible || o.type !== "fill") continue;
+    if (o.params && o.params.fillMode === "outline") continue;
+    const cs = (o.contours && o.contours.length) ? o.contours
+      : (o.points && o.points.length >= 3 ? [o.points] : null);
+    if (!cs) continue;
+    const bb = bbox(cs.flat());
+    if (bb.w * bb.h < 25) continue;
+    out.push(cs);
+  }
+  return out;
+}
 
 const MAX_STITCH_MM = 12.1;   // anything longer becomes a jump sequence
 const MAX_MOVE_MM = 204.0;    // PEC hard limit (2047 units * 0.1mm)
@@ -62,7 +87,8 @@ export function compile() {
     }
 
     for (const obj of block.objects) {
-      const subpaths = generateForObject(obj).filter((sp) => sp && sp.length >= 2);
+      const subpaths = generateForObject(obj, occludersFor(obj)).filter((sp) => sp && sp.length >= 2);
+      let firstOfObj = true;
       for (const pts of subpaths) {
         let fresh = false; // true = thread was just started/re-started here
         if (prev === null) {
@@ -75,7 +101,10 @@ export function compile() {
           // `_trimBefore` is set by the generator on joins whose straight
           // connector would leave the region (e.g. cross a letter counter):
           // even a short gap must trim, never be stitched straight across.
-          if (gap > TRIM_GAP_MM || pts._trimBefore) {
+          // Distinct OBJECTS always tie off + trim between them too (unless
+          // they practically touch) — a straight stitched bridge between two
+          // separate design elements crosses whatever lies between them.
+          if (gap > TRIM_GAP_MM || pts._trimBefore || (firstOfObj && gap > 1.0)) {
             // Disjoint sub-path: tie off, trim, jump across, restart.
             lockAt(prev, prev2, ci);
             push(prev.x, prev.y, "trim", ci);
@@ -97,6 +126,7 @@ export function compile() {
             push(p.x, p.y, "stitch", ci);
           }
         }
+        firstOfObj = false;
       }
     }
   });

@@ -110,6 +110,14 @@ and an optional **outline pass**, then simulate and export.
   of a filled interior.
 
 ### More
+- **Autosave** — the design continuously saves to your browser and comes back
+  when you reopen the page; closing the tab can't lose work. **Save/Open**
+  still writes/reads `.gsew` files for backups and sharing, and **Reset**
+  restores the sample heart + GoodSew design.
+- **Overlap knockout** — where objects stack, the hidden fill underneath is
+  removed automatically (with a small tuck-under margin so no fabric gap shows),
+  so layered designs sew flat instead of double-stitching. Text and outline
+  passes still stitch on top of fill, standard embroidery practice.
 - **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
 - **Undo / redo** — Ctrl/Cmd+Z and Ctrl+Y (or Ctrl/Cmd+Shift+Z), plus toolbar buttons.
 - **Layout tools** — multi-select (Shift+click), copy / cut / paste / duplicate

@@ -22,7 +22,7 @@ import { parseSVG } from "./import/svg.js";
 import { traceRaster, RASTER_MAX_DIM } from "./import/raster.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.6.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.7.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -102,7 +102,8 @@ function refreshQuality() {
   if (!host || !compiled) return;
   const { warnings } = analyzeQuality(compiled, getHoop(state.hoopId));
   const list = warnings.slice();
-  // Overlap (double-stitched) detection over visible objects' boxes.
+  // Overlap detection over visible objects' boxes. Hidden fill is knocked out
+  // automatically now, so this is informational, not a defect.
   const vis = state.objects.filter((o) => o.visible);
   let overlaps = 0;
   for (let i = 0; i < vis.length; i++) for (let j = i + 1; j < vis.length; j++) {
@@ -111,7 +112,7 @@ function refreshQuality() {
     const oy = Math.min(a.cy + a.h / 2, b.cy + b.h / 2) - Math.max(a.cy - a.h / 2, b.cy - b.h / 2);
     if (ox > 1 && oy > 1) overlaps++;
   }
-  if (overlaps > 0) list.push({ sev: "info", msg: `${overlaps} overlapping object pair${overlaps === 1 ? "" : "s"} — areas may be double-stitched` });
+  if (overlaps > 0) list.push({ sev: "info", msg: `${overlaps} overlapping object pair${overlaps === 1 ? "" : "s"} — hidden fill removed automatically (lower layers tuck under upper)` });
 
   host.innerHTML = "";
   if (!list.length) { host.className = "quality-list ok"; host.textContent = "✓ No issues found."; return; }
@@ -162,6 +163,36 @@ function refreshStats() {
   $("stat-time").textContent = formatTime(st.seconds);
 }
 
+// ----------------------------------------------------------- browser storage
+// The current design autosaves to localStorage on every committed change
+// (debounced), and is restored on the next visit — closing the tab can't lose
+// work. Manual Save/Open .gsew files still work for real backups/sharing.
+const AUTOSAVE_KEY = "goodsew.design.v1";
+let autosaveTimer = null;
+function autosave() {
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(flushAutosave, 600);
+}
+function flushAutosave() {
+  clearTimeout(autosaveTimer);
+  try { localStorage.setItem(AUTOSAVE_KEY, serialize()); } catch { /* quota/private mode */ }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
+window.addEventListener("pagehide", flushAutosave);
+
+// Restore the autosaved design (boot). Returns true if something was restored.
+function restoreAutosaved() {
+  try {
+    const s = localStorage.getItem(AUTOSAVE_KEY);
+    if (!s) return false;
+    const data = JSON.parse(s);
+    if (!data || !Array.isArray(data.objects) || !data.objects.length) return false;
+    deserialize(s);
+    state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
+    return true;
+  } catch { return false; }
+}
+
 // ----------------------------------------------------------- history (undo/redo)
 let undoStack = [], redoStack = [], commitTimer = null;
 
@@ -184,6 +215,7 @@ function commit() {
   if (undoStack.length > 80) undoStack.shift();
   redoStack = [];
   updateUndoButtons();
+  autosave();
 }
 // Debounced commit for rapid edits (typing, dragging a slider).
 function commitSoon() { clearTimeout(commitTimer); commitTimer = setTimeout(commit, 350); }
@@ -198,6 +230,7 @@ function restore(snap) {
   markDirty();
   if (state.mode === "stitch") recompile();
   refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+  autosave(); // undo/redo should persist across reloads too
 }
 function undo() {
   clearTimeout(commitTimer);
@@ -339,14 +372,30 @@ function importSVG(text) {
 
 // Import a raster logo (PNG/JPG/WebP): auto-vectorize into per-color regions.
 function importRasterImage(imgEl) {
-  // work at a capped resolution — faster, and matches what thread resolves
-  const scale = Math.min(1, RASTER_MAX_DIM / Math.max(imgEl.naturalWidth || imgEl.width, imgEl.naturalHeight || imgEl.height));
-  const w = Math.max(2, Math.round((imgEl.naturalWidth || imgEl.width) * scale));
-  const h = Math.max(2, Math.round((imgEl.naturalHeight || imgEl.height) * scale));
+  // Downscale in HALVING steps with high-quality resampling. A single big
+  // drawImage jump (e.g. 3000px → 512px) uses a small filter kernel and
+  // produces aliased, chewed-up edges — which then trace into low-quality
+  // contours. Repeated 2× reductions keep edges clean.
+  let src = imgEl;
+  let sw = imgEl.naturalWidth || imgEl.width;
+  let sh = imgEl.naturalHeight || imgEl.height;
+  while (Math.max(sw, sh) > RASTER_MAX_DIM * 2) {
+    const half = document.createElement("canvas");
+    half.width = Math.max(2, Math.round(sw / 2));
+    half.height = Math.max(2, Math.round(sh / 2));
+    const g = half.getContext("2d");
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+    g.drawImage(src, 0, 0, half.width, half.height);
+    src = half; sw = half.width; sh = half.height;
+  }
+  const scale = Math.min(1, RASTER_MAX_DIM / Math.max(sw, sh));
+  const w = Math.max(2, Math.round(sw * scale));
+  const h = Math.max(2, Math.round(sh * scale));
   const cv = document.createElement("canvas");
   cv.width = w; cv.height = h;
   const c2 = cv.getContext("2d", { willReadFrequently: true });
-  c2.drawImage(imgEl, 0, 0, w, h);
+  c2.imageSmoothingEnabled = true; c2.imageSmoothingQuality = "high";
+  c2.drawImage(src, 0, 0, w, h);
   const imgData = c2.getImageData(0, 0, w, h);
   importRasterData(imgData);
 }
@@ -1562,6 +1611,14 @@ $("btn-new").onclick = () => {
   resetHistory();
   toast("New design");
 };
+$("btn-reset").onclick = () => {
+  if (state.objects.length && !confirm("Replace your current design with the sample heart + GoodSew design?")) return;
+  state.objects = []; state.guides = []; setSel([]); state.image = null;
+  seedDemo();
+  markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
+  resetHistory(); needsRender = true;
+  toast("Reset to the sample design");
+};
 $("file-svg").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   importLogoFile(f);
@@ -1702,6 +1759,7 @@ function boot() {
   console.log(`GoodSew v${APP_VERSION} — JS bundle active`);
   const badge = $("version-badge"); if (badge) badge.textContent = `GoodSew v${APP_VERSION}`;
   injectFontFaces();
+  restoreAutosaved(); // seedDemo below is a no-op if this restored anything
   document.body.dataset.theme = state.theme;
   document.body.dataset.mode = state.mode;
   buildThreadPicker();
@@ -1720,7 +1778,7 @@ function boot() {
   window.__gs = {
     state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
-    addText, addShape, bakeText, importSVG, importRasterData, optimizeOrder, moveLayer, selectAllObjects,
+    addText, addShape, bakeText, importSVG, importRasterData, importRasterImage, optimizeOrder, moveLayer, selectAllObjects,
     quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
     // test helper: screen-space handle positions for the given object
     handlesScreen: (id) => { const o = state.objects.find((x) => x.id === id); if (!o) return null; setSel([o.id]); return selectionHandlesScreen(o); },

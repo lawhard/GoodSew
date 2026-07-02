@@ -131,6 +131,20 @@ export function segmentInContours(a, b, contours) {
   return true;
 }
 
+// True iff the open segment a→b stays entirely OUTSIDE the region (even-odd):
+// its midpoint is outside and it properly crosses no boundary edge. Used to
+// keep stitches/travel out of areas covered by objects stacked above.
+export function segmentAvoids(a, b, contours) {
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  if (pointInContours(mid, contours)) return false;
+  for (const poly of contours) {
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      if (properCross(a, b, poly[j], poly[i])) return false;
+    }
+  }
+  return true;
+}
+
 // Signed area of a closed polygon (positive = CCW in a y-down system depends on
 // convention; we only use the SIGN to pick the inward normal direction).
 export function signedArea(poly) {

@@ -70,6 +70,42 @@ else console.log('ok: rendered', r2.stitches, 'stitches,', r2.seconds.toFixed(0)
 
 await page.screenshot({ path: 'scratch-logo.png', clip: { x: 150, y: 80, width: 1050, height: 800 } });
 
+// ---- high-res JPEG round-trip: quality must survive compression + downscale
+const rq = await page.evaluate(async () => {
+  const gs = window.__gs;
+  gs.state.objects = [];
+  // 1600×1200 "photo-grade" logo: big navy circle + red diamond, JPEG q0.85
+  const cv = document.createElement('canvas');
+  cv.width = 1600; cv.height = 1200;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 1600, 1200);
+  g.fillStyle = '#12306e';
+  g.beginPath(); g.arc(600, 600, 420, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#d21f2c';
+  g.beginPath(); g.moveTo(1300, 300); g.lineTo(1500, 600); g.lineTo(1300, 900); g.lineTo(1100, 600); g.closePath(); g.fill();
+  const url = cv.toDataURL('image/jpeg', 0.85);
+  const img = new Image();
+  await new Promise((res) => { img.onload = res; img.src = url; });
+  gs.importRasterImage(img);
+  const objs = gs.state.objects;
+  // measure circle roundness: the biggest part's outer loop vs a perfect circle
+  const big = objs.map(o => ({ o, n: (o.contours && o.contours[0] || []).length }))
+    .sort((a, b) => b.n - a.n)[0].o;
+  const loop = big.contours[0];
+  let cx = 0, cy = 0;
+  for (const p of loop) { cx += p.x; cy += p.y; }
+  cx /= loop.length; cy /= loop.length;
+  const rs = loop.map(p => Math.hypot(p.x - cx, p.y - cy));
+  const rMean = rs.reduce((a, b) => a + b, 0) / rs.length;
+  const rMaxDev = Math.max(...rs.map(r => Math.abs(r - rMean)));
+  return { count: objs.length, colors: objs.map(o => o.color), pts: loop.length, rMean, rMaxDev };
+});
+if (rq.count !== 2) fail(`jpeg: expected 2 parts, got ${rq.count}: ${rq.colors.join(',')}`);
+else console.log('ok: hi-res JPEG -> 2 parts', rq.colors.join(', '));
+const devPct = (rq.rMaxDev / rq.rMean) * 100;
+if (devPct > 3.0) fail(`jpeg: circle rough — max radius deviation ${devPct.toFixed(1)}% (want ≤3%)`);
+else console.log(`ok: circle traced smooth (max radius deviation ${devPct.toFixed(1)}%, ${rq.pts} pts)`);
+
 // ---- SVG with inherited fill via <g> + CSS class + gradient + white bg rect
 const r3 = await page.evaluate(() => {
   const gs = window.__gs;
