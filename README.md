@@ -43,10 +43,11 @@ spin. Everything is meant to feel like Word or an image markup tool.
   between them. Make text **bold / italic / underlined**, bend it into an **arc
   or full circle**, set its size and rotation, and recolor it — all from a clean
   properties panel.
-- **Shapes** — a visual picker (not a dropdown): rectangle, rounded rectangle,
-  ellipse/circle, triangle, diamond, pentagon, hexagon, 5/6-point stars and
-  heart. Pick one, drag to place (Shift for an even shape), then resize/rotate
-  like anything else. Filled or outline-only.
+- **Shapes** — a visual picker organized into **Basics, Stars & Symbols, and
+  Fun** categories: 23 shapes from rectangles and stars to arrows, lightning,
+  shields, clouds, flowers, gears and speech bubbles, each with a labelled
+  thumbnail. Pick one, drag to place (Shift for an even shape), then
+  resize/rotate like anything else. Filled or outline-only.
 - **Background image tracing** — import any image and lay artwork over it.
 - **Logo import (SVG, PNG, JPG…)** — upload a logo and it's **auto-converted to
   stitchable vector art** (the **Logo** button).
@@ -110,6 +111,21 @@ and an optional **outline pass**, then simulate and export.
   of a filled interior.
 
 ### More
+- **3D Stitch View** — one click after rendering opens a full three.js render:
+  every stitch is a physical thread over woven fabric in the hoop, with studio
+  lighting, shadows and thread sheen. Orbit/zoom/pan freely, and **play back
+  the sew order** in 3D (slider + speed control) to see exactly how the design
+  is stitched. three.js loads lazily so the app stays light.
+- **Manual digitizing (Draw tools)** — simple by default, powerful underneath:
+  **Satin** draws a true satin column along a line you click (width, density,
+  pull comp, underlay in Properties), **Run** draws a running-stitch path
+  (length + bean/heavy passes), **Region** draws a freehand filled shape with
+  all the standard stitch settings. Double-click or Enter finishes, Esc cancels.
+- **Smart alignment guides** — while dragging, objects snap to other objects'
+  edges and centers (magenta guides) and the hoop centerlines (blue), exactly
+  like Illustrator. Hold Alt to move freely.
+- **Hoop visualization** — the physical SE700 4×4" hoop (frame, screw, fabric)
+  drawn around the sewing field; toggle it in the View panel.
 - **Autosave** — the design continuously saves to your browser and comes back
   when you reopen the page; closing the tab can't lose work. **Save/Open**
   still writes/reads `.gsew` files for backups and sharing, and **Reset**
@@ -135,10 +151,10 @@ and an optional **outline pass**, then simulate and export.
   **Shift + wheel**) pans; or drag any empty part of the plate to pan (also
   Space-drag / middle-drag).
 - **Product preview** — see the design composited at *true physical scale* onto
-  a medium t-shirt (left chest), sneaker, bath towel, bath mat, or a custom
-  rectangle whose dimensions you type in. Each mockup is drawn to real-world
-  proportions, so the same design correctly reads tiny on a towel and prominent
-  on a small swatch — a faithful sense of size and placement before stitching.
+  a t-shirt, **pocket tee** (design on the pocket), **crew socks**, **tote
+  bag**, sneaker, bath towel, bath mat, or a custom rectangle. **Every product
+  has adjustable real dimensions** (chest width, foot length, bag size…), so
+  you can dial in the exact garment you're stitching and judge size honestly.
 - **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
   zoom/pan, a live cursor position marker, and draggable guide lines: pull a
   vertical guide from the top ruler or a horizontal guide from the left ruler;

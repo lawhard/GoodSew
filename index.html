@@ -25,31 +25,34 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.7.0" />
+  <link rel="stylesheet" href="css/styles.css?v=0.8.0" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.7.0",
-      "./js/hoop.js": "./js/hoop.js?v=0.7.0",
-      "./js/threads.js": "./js/threads.js?v=0.7.0",
-      "./js/compiler.js": "./js/compiler.js?v=0.7.0",
-      "./js/stats.js": "./js/stats.js?v=0.7.0",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.7.0",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.7.0",
-      "./js/render.js": "./js/render.js?v=0.7.0",
-      "./js/simulator.js": "./js/simulator.js?v=0.7.0",
-      "./js/geometry.js": "./js/geometry.js?v=0.7.0",
-      "./js/shapes.js": "./js/shapes.js?v=0.7.0",
-      "./js/fonts.js": "./js/fonts.js?v=0.7.0",
-      "./js/units.js": "./js/units.js?v=0.7.0",
-      "./js/preview.js": "./js/preview.js?v=0.7.0",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.7.0",
-      "./js/import/raster.js": "./js/import/raster.js?v=0.7.0",
-      "./js/qa.js": "./js/qa.js?v=0.7.0",
-      "./js/stitches.js": "./js/stitches.js?v=0.7.0"
+      "./js/state.js": "./js/state.js?v=0.8.0",
+      "./js/hoop.js": "./js/hoop.js?v=0.8.0",
+      "./js/threads.js": "./js/threads.js?v=0.8.0",
+      "./js/compiler.js": "./js/compiler.js?v=0.8.0",
+      "./js/stats.js": "./js/stats.js?v=0.8.0",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.8.0",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.8.0",
+      "./js/render.js": "./js/render.js?v=0.8.0",
+      "./js/simulator.js": "./js/simulator.js?v=0.8.0",
+      "./js/geometry.js": "./js/geometry.js?v=0.8.0",
+      "./js/shapes.js": "./js/shapes.js?v=0.8.0",
+      "./js/fonts.js": "./js/fonts.js?v=0.8.0",
+      "./js/units.js": "./js/units.js?v=0.8.0",
+      "./js/preview.js": "./js/preview.js?v=0.8.0",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.8.0",
+      "./js/import/raster.js": "./js/import/raster.js?v=0.8.0",
+      "./js/qa.js": "./js/qa.js?v=0.8.0",
+      "./js/stitches.js": "./js/stitches.js?v=0.8.0",
+      "./js/view3d.js": "./js/view3d.js?v=0.8.0",
+      "three": "./vendor/three.module.min.js?v=0.8.0",
+      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.8.0"
     }
   }
   </script>
@@ -79,6 +82,7 @@
 
       <!-- stitch phase -->
       <button id="btn-back" class="btn mode-stitch" title="Back to editing">← Edit Design</button>
+      <button id="btn-3d" class="btn mode-stitch" title="Full-detail 3D thread rendering with sew-order playback">3D View</button>
       <button id="btn-preview" class="btn mode-stitch" title="Preview on a product">Preview</button>
       <button id="btn-export-dst" class="btn mode-stitch" title="Export to Tajima DST (universal)">Export DST</button>
       <button id="btn-export-pes" class="btn btn-primary mode-stitch" title="Export to Brother PES">Export PES</button>
@@ -104,6 +108,13 @@
       </div>
 
       <div class="tool-group mode-design">
+        <div class="group-label">Draw</div>
+        <button class="tool" data-tool="satin" title="Draw a satin column: click points along its center, double-click or Enter to finish"><span class="ic">〰</span><span>Satin</span></button>
+        <button class="tool" data-tool="run" title="Draw a running-stitch line: click points, double-click or Enter to finish"><span class="ic">┄</span><span>Run</span></button>
+        <button class="tool" data-tool="poly" title="Draw a filled shape: click corner points, double-click or Enter to close"><span class="ic">▰</span><span>Region</span></button>
+      </div>
+
+      <div class="tool-group mode-design">
         <div class="group-label">Thread</div>
         <button id="thread-button" class="thread-button" title="Choose a New brothread color">
           <span id="active-thread-swatch" class="active-swatch"></span>
@@ -123,6 +134,7 @@
       <div class="tool-group">
         <div class="group-label">View</div>
         <label class="check"><input type="checkbox" id="chk-show-grid" checked /> Grid</label>
+        <label class="check"><input type="checkbox" id="chk-show-hoop" checked /> Hoop</label>
       </div>
     </aside>
 
@@ -139,7 +151,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>⚡ Render Stitches</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.7.0</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.8.0</div>
     </main>
 
     <!-- Right -->
@@ -248,9 +260,9 @@
         <canvas id="preview-canvas"></canvas>
       </div>
       <div class="modal-foot">
-        <div id="preview-custom" class="custom-dims hidden">
-          <label>Width <input type="number" id="custom-w" value="6" step="0.1" min="1"></label>
-          <label>Height <input type="number" id="custom-h" value="4" step="0.1" min="1"></label>
+        <div id="preview-custom" class="custom-dims">
+          <label><span id="lbl-custom-w">Width</span> <input type="number" id="custom-w" value="6" step="0.1" min="1"></label>
+          <label><span id="lbl-custom-h">Height</span> <input type="number" id="custom-h" value="4" step="0.1" min="1"></label>
           <span id="custom-unit" class="muted">in</span>
         </div>
         <div class="muted" id="preview-note">Design shown at true size relative to the item.</div>
@@ -258,9 +270,31 @@
     </div>
   </div>
 
+  <!-- 3D stitch viewer modal -->
+  <div id="view3d-modal" class="modal hidden">
+    <div class="modal-card modal-card-3d">
+      <div class="modal-head">
+        <h2>3D Stitch View <span class="muted">— drag to orbit · scroll to zoom · shift-drag to pan</span></h2>
+        <button id="view3d-close" class="btn">✕ Close</button>
+      </div>
+      <div id="view3d-stage" class="view3d-stage"></div>
+      <div class="modal-foot view3d-foot">
+        <button id="view3d-play" class="btn btn-primary" title="Play the sew order">▶</button>
+        <input type="range" id="view3d-scrub" class="sim-scrub" min="0" max="0" value="0" />
+        <select id="view3d-speed" class="select view3d-speed" title="Playback speed">
+          <option value="2">Slow</option>
+          <option value="6" selected>Normal</option>
+          <option value="20">Fast</option>
+          <option value="60">Turbo</option>
+        </select>
+        <span id="view3d-counter" class="muted view3d-counter">0 / 0</span>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.7.0"></script>
+  <script type="module" src="js/app.js?v=0.8.0"></script>
 </body>
 </html>

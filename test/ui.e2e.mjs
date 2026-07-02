@@ -70,9 +70,11 @@ const heartC = await page.evaluate((id) => { const o = window.__gs.state.objects
 const sc = await page.evaluate((p) => { return window.__gs ? null : null; }, heartC); // noop
 // move via dragging on its on-screen center
 const hs = await page.evaluate((id) => window.__gs.handlesScreen(id), heartId);
-await page.mouse.move(box.x + hs.n.x, box.y + (hs.n.y + hs.s.y) / 2); // roughly center
+// grab slightly below center: the exact center can coincide with the test's
+// horizontal guide (grabbing the guide instead of the heart)
+await page.mouse.move(box.x + hs.n.x, box.y + (hs.n.y + hs.s.y) / 2 + 14);
 await page.mouse.down();
-await page.mouse.move(box.x + hs.n.x + 40, box.y + (hs.n.y + hs.s.y) / 2 + 30, { steps: 8 });
+await page.mouse.move(box.x + hs.n.x + 40, box.y + (hs.n.y + hs.s.y) / 2 + 44, { steps: 8 });
 await page.mouse.up();
 const afterPos = await page.evaluate((id) => { const o = window.__gs.state.objects.find((x) => x.id === id); return { x: o.box.x, y: o.box.y }; }, heartId);
 ok(Math.abs(afterPos.x - beforePos.x) > 1 || Math.abs(afterPos.y - beforePos.y) > 1, "dragging moved the object");

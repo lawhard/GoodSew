@@ -72,7 +72,7 @@ console.log("Step 4: add a filled ellipse");
 await setColor("#0a5563");
 await page.click('.tool[data-tool="shape"]');
 await sleep(120);
-await page.evaluate(() => { const c = [...document.querySelectorAll(".shape-cell")].find((x) => x.title === "Ellipse / Circle"); c.click(); });
+await page.evaluate(() => { const c = [...document.querySelectorAll(".shape-cell")].find((x) => x.title.startsWith("Ellipse")); c.click(); });
 await dragOnCanvas(0.32, 0.30, 0.68, 0.66);
 s = await state();
 ok(s.objects === 1, `ellipse added (objects=${s.objects})`);

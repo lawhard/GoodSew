@@ -22,30 +22,52 @@ import { parseSVG } from "./import/svg.js";
 import { traceRaster, RASTER_MAX_DIM } from "./import/raster.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.7.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.8.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const cam = new Camera();
 
-const view = { showImage: true, showStitches: true, showJumps: true, showPoints: false, showGrid: true };
+const view = { showImage: true, showStitches: true, showJumps: true, showPoints: false, showGrid: true, showHoop: true };
 
 let compiled = null;
 let tool = "select";
 let drag = null;
+// In-progress manual digitizing: { type: 'satin'|'run'|'poly', points, cursor }
+let drawing = null;
 let needsRender = true;
 let spaceDown = false;
 let shiftDown = false;
 let cursor = null;
 let hoverGuide = null;
 let shapeKind = "rect";
-// While dragging, which hoop centerline(s) the moving object is magnetically
-// snapped to (so render can highlight them). null when not snapped.
-let snapLines = { x: false, y: false };
+// Smart alignment guides shown while dragging: the moving selection snaps to
+// other objects' edges/centers and the hoop centerlines (Illustrator-style).
+// Each guide: { axis:'v'|'h', pos, a, b, kind:'hoop'|'obj' } in world mm.
+let snapGuides = [];
 
-// How close (in screen pixels) the object center must come to a snap line
+// How close (in screen pixels) an edge/center must come to a snap target
 // before it pulls in. Pixel-based so the feel is the same at any zoom.
 const SNAP_PX = 7;
+
+// Static snap targets for a move drag: the hoop centerlines plus every other
+// visible object's left/center/right (xs) and top/middle/bottom (ys), with
+// the source extent so the guide line can span both objects.
+function collectAlignTargets(excludeIds) {
+  const hoop = getHoop(state.hoopId);
+  const t = { xs: [], ys: [] };
+  t.xs.push({ pos: hoop.w / 2, a: 0, b: hoop.h, kind: "hoop" });
+  t.ys.push({ pos: hoop.h / 2, a: 0, b: hoop.w, kind: "hoop" });
+  for (const o of state.objects) {
+    if (!o.visible || excludeIds.has(o.id)) continue;
+    const bx = getObjBox(o);
+    const L = bx.cx - bx.w / 2, R = bx.cx + bx.w / 2;
+    const T = bx.cy - bx.h / 2, B = bx.cy + bx.h / 2;
+    for (const pos of [L, bx.cx, R]) t.xs.push({ pos, a: T, b: B, kind: "obj" });
+    for (const pos of [T, bx.cy, B]) t.ys.push({ pos, a: L, b: R, kind: "obj" });
+  }
+  return t;
+}
 
 // Axis-aligned union bounds (+ center) of a set of objects, in world mm.
 function groupBounds(objs) {
@@ -78,7 +100,7 @@ function resize() {
   canvas.style.height = r.height + "px";
   canvas.width = Math.round(r.width * devicePixelRatio);
   canvas.height = Math.round(r.height * devicePixelRatio);
-  if (!cam._fitted) { cam.fit(getHoop(state.hoopId), r.width, r.height, RULER); cam._fitted = true; }
+  if (!cam._fitted) { cam.fit(getHoop(state.hoopId), r.width, r.height, RULER, view.showHoop ? 17 : 2); cam._fitted = true; }
   needsRender = true;
 }
 window.addEventListener("resize", resize);
@@ -553,9 +575,13 @@ function setTool(t) {
     select: "Click to select. Drag to move. Drag handles to resize, top knob to rotate. Double-click text to edit.",
     text: "Click on the canvas to drop your text, then type.",
     shape: "Pick a shape, then drag on the canvas. Hold Shift for an even shape.",
+    satin: "Click points along the column's center line. Double-click or Enter to finish, Esc to cancel.",
+    run: "Click points along the stitch path. Double-click or Enter to finish, Esc to cancel.",
+    poly: "Click the corners of your shape. Double-click or Enter to close it, Esc to cancel.",
   };
   $("hud-hint").textContent = hints[t] || "";
   canvas.style.cursor = t === "select" ? "default" : "crosshair";
+  if (t !== "satin" && t !== "run" && t !== "poly") drawing = null;
   if (t === "shape") openShapePopover();
 }
 
@@ -583,6 +609,39 @@ function addShape(kind, box) {
   setSel([obj.id]);
   markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint();
   return obj;
+}
+
+// Turn the in-progress manual drawing into a real object. Satin lines become
+// proper satin columns (spine + width), Run lines become running stitch, and
+// Regions become ordinary fill shapes with the full stitch settings.
+function finishDrawing() {
+  if (!drawing) return;
+  // drop double-click / accidental duplicate points
+  const pts = [];
+  for (const p of drawing.points) {
+    const l = pts[pts.length - 1];
+    if (!l || Math.hypot(p.x - l.x, p.y - l.y) > 0.4) pts.push(p);
+  }
+  const type = drawing.type;
+  drawing = null;
+  const need = type === "poly" ? 3 : 2;
+  if (pts.length < need) { toast(type === "poly" ? "Click at least 3 corners." : "Click at least 2 points.", true); needsRender = true; return; }
+
+  let obj;
+  if (type === "satin") {
+    obj = makeObject("satin", pts, state.activeColor);
+    obj.name = "Satin line";
+  } else if (type === "run") {
+    obj = makeObject("running", pts, state.activeColor);
+    obj.name = "Run stitch";
+  } else {
+    obj = makeObject("fill", pts, state.activeColor);
+    obj.name = "Drawn shape";
+  }
+  state.objects.push(obj);
+  setSel([obj.id]);
+  setTool("select");
+  markDirty(); refreshObjectList(); refreshProps(); updateEmptyHint(); commit(); needsRender = true;
 }
 
 // ------------------------------------------------------------- coordinate map
@@ -650,9 +709,17 @@ canvas.addEventListener("mousedown", (e) => {
   }
   if (tool === "text") { addText(world); return; }
 
+  // Manual digitizing: click to place points; finish on double-click / Enter.
+  if (tool === "satin" || tool === "run" || tool === "poly") {
+    if (!drawing) drawing = { type: tool, points: [] };
+    drawing.points.push({ x: world.x, y: world.y });
+    needsRender = true;
+    return;
+  }
+
   // select tool — resize/rotate handles (single selection only), then objects
   const sel = selectedObject();
-  if (sel && sel.visible && state.selectedIds.length === 1) {
+  if (sel && sel.visible && state.selectedIds.length === 1 && (sel.box || sel.type === "text")) {
     const H = selectionHandlesScreen(sel);
     if (dist(H.rotate, { x: mx, y: my }) <= HANDLE_HIT + 2) {
       const box = H._box;
@@ -685,7 +752,9 @@ canvas.addEventListener("mousedown", (e) => {
     } else {
       setSel([hit.id]);
     }
-    drag = { mode: "move", start: world, c0: groupBounds(selectedObjects()), items: selectedObjects().map((o) => ({ obj: o, orig: snapshot(o) })) };
+    drag = { mode: "move", start: world, c0: groupBounds(selectedObjects()),
+             alignTargets: collectAlignTargets(new Set(state.selectedIds)),
+             items: selectedObjects().map((o) => ({ obj: o, orig: snapshot(o) })) };
     refreshProps(); refreshObjectList(); needsRender = true;
   } else {
     // empty space: deselect (unless extending) and pan the view
@@ -704,6 +773,7 @@ canvas.addEventListener("mousemove", (e) => {
   cursor = { sx: e.offsetX, sy: e.offsetY };
   $("hud-coords").textContent = `${fmt(world.x, state.units)}, ${fmt(world.y, state.units)}`;
 
+  if (drawing) { drawing.cursor = world; needsRender = true; }
   if (!drag) {
     const gh = guideAt(e.offsetX, e.offsetY);
     if (gh !== hoverGuide) hoverGuide = gh;
@@ -730,15 +800,33 @@ canvas.addEventListener("mousemove", (e) => {
     drag.obj.box = box; rebuildShape(drag.obj); markDirty();
   } else if (drag.mode === "move") {
     let dx = world.x - drag.start.x, dy = world.y - drag.start.y;
-    // Magnetic snap: when the moving group's center comes close to a hoop
-    // centerline it nudges onto it. Hold Alt to move freely (bypass snap).
-    snapLines = { x: false, y: false };
-    if (!e.altKey && drag.c0) {
-      const hoop = getHoop(state.hoopId);
+    // Smart alignment: snap the moving selection's edges/center to other
+    // objects' edges/centers and the hoop centerlines, drawing a guide line
+    // through both (Illustrator-style). Hold Alt to move freely.
+    snapGuides = [];
+    if (!e.altKey && drag.c0 && drag.alignTargets) {
       const tol = SNAP_PX / cam.pxPerMm; // px → mm at the current zoom
-      const ncx = drag.c0.cx + dx, ncy = drag.c0.cy + dy;
-      if (Math.abs(ncx - hoop.w / 2) < tol) { dx += hoop.w / 2 - ncx; snapLines.x = true; }
-      if (Math.abs(ncy - hoop.h / 2) < tol) { dy += hoop.h / 2 - ncy; snapLines.y = true; }
+      const b = drag.c0;
+      const pick = (targets, mine) => {
+        let best = null;
+        for (const t of targets) {
+          for (const m of mine) {
+            const d = t.pos - m;
+            if (Math.abs(d) < (best ? Math.abs(best.d) : tol)) best = { d, t };
+          }
+        }
+        return best;
+      };
+      const myXs = [b.minX + dx, (b.minX + b.maxX) / 2 + dx, b.maxX + dx];
+      const myYs = [b.minY + dy, (b.minY + b.maxY) / 2 + dy, b.maxY + dy];
+      const bx = pick(drag.alignTargets.xs, myXs);
+      const by = pick(drag.alignTargets.ys, myYs);
+      if (bx) dx += bx.d;
+      if (by) dy += by.d;
+      if (bx) snapGuides.push({ axis: "v", pos: bx.t.pos, kind: bx.t.kind,
+        a: Math.min(bx.t.a, b.minY + dy), b: Math.max(bx.t.b, b.maxY + dy) });
+      if (by) snapGuides.push({ axis: "h", pos: by.t.pos, kind: by.t.kind,
+        a: Math.min(by.t.a, b.minX + dx), b: Math.max(by.t.b, b.maxX + dx) });
     }
     for (const it of drag.items) {
       it.obj.points = it.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
@@ -818,7 +906,7 @@ window.addEventListener("mouseup", () => {
     }
   }
   drag = null;
-  snapLines = { x: false, y: false };
+  snapGuides = [];
   needsRender = true;
 });
 
@@ -826,6 +914,7 @@ window.addEventListener("mouseup", () => {
 canvas.addEventListener("mousedown", () => { const s = selectedObject(); if (s && s.type === "text") s._sizeAtDragStart = s.params.size; });
 
 canvas.addEventListener("dblclick", (e) => {
+  if (drawing) { finishDrawing(); return; }
   const gh = guideAt(e.offsetX, e.offsetY);
   if (gh) { state.guides = state.guides.filter((g) => g.id !== gh.id); hoverGuide = null; needsRender = true; return; }
   if (state.mode !== "design") return;
@@ -894,10 +983,25 @@ function guideAt(mx, my) {
   return null;
 }
 
+function distToSeg(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const L2 = dx * dx + dy * dy;
+  const t = L2 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2)) : 0;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
 function hitTestObject(world) {
   for (let i = state.objects.length - 1; i >= 0; i--) {
     const obj = state.objects[i];
     if (!obj.visible) continue;
+    // line objects (satin column / running stitch): hit along the spine
+    if ((obj.type === "satin" || obj.type === "running") && obj.points.length >= 2) {
+      const tol = obj.type === "satin" ? Math.max(1.5, (obj.params.width || 4) / 2 + 0.5) : 1.6;
+      for (let k = 1; k < obj.points.length; k++) {
+        if (distToSeg(world, obj.points[k - 1], obj.points[k]) <= tol) return obj;
+      }
+      continue;
+    }
     const box = getObjBox(obj);
     // transform world into object-local frame
     const a = rad(box.rot);
@@ -956,6 +1060,10 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.target.tagName === "TEXTAREA") return;
   if (e.key === " ") spaceDown = true;
+  if (drawing) {
+    if (e.key === "Enter") { finishDrawing(); e.preventDefault(); return; }
+    if (e.key === "Escape") { drawing = null; needsRender = true; e.preventDefault(); return; }
+  }
 
   // Arrow keys fine-tune the selected object(s). Default 0.5 mm steps; hold
   // Shift for a coarse 5 mm jump, Alt for a precise 0.1 mm tweak.
@@ -1099,20 +1207,30 @@ function updateHoopDims() {
 function buildShapeGrid() {
   const grid = $("shape-grid");
   grid.innerHTML = "";
-  for (const s of SHAPES) {
-    if (s.kind === "line") continue; // lines aren't fillable objects in this phase
-    const cell = document.createElement("button");
-    cell.className = "shape-cell" + (s.kind === shapeKind ? " active" : "");
-    cell.title = s.label;
-    cell.innerHTML = shapeSVG(s.kind);
-    cell.onclick = () => {
-      shapeKind = s.kind;
-      tool = "shape";
-      document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === "shape"));
-      $("hud-hint").textContent = `Drag on the canvas to place your ${s.label.toLowerCase()}. Hold Shift for an even shape.`;
-      $("shape-popover").classList.add("hidden"); // free the whole canvas to draw on
-    };
-    grid.appendChild(cell);
+  const cats = [...new Set(SHAPES.filter((s) => s.kind !== "line").map((s) => s.cat || "Shapes"))];
+  for (const cat of cats) {
+    const head = document.createElement("div");
+    head.className = "shape-cat";
+    head.textContent = cat;
+    grid.appendChild(head);
+    const row = document.createElement("div");
+    row.className = "shape-grid-row";
+    for (const s of SHAPES) {
+      if (s.kind === "line" || (s.cat || "Shapes") !== cat) continue;
+      const cell = document.createElement("button");
+      cell.className = "shape-cell" + (s.kind === shapeKind ? " active" : "");
+      cell.title = s.label;
+      cell.innerHTML = shapeSVG(s.kind) + `<span class="shape-name">${s.label}</span>`;
+      cell.onclick = () => {
+        shapeKind = s.kind;
+        tool = "shape";
+        document.querySelectorAll(".tool").forEach((b) => b.classList.toggle("active", b.dataset.tool === "shape"));
+        $("hud-hint").textContent = `Drag on the canvas to place your ${s.label.toLowerCase()}. Hold Shift for an even shape.`;
+        $("shape-popover").classList.add("hidden"); // free the whole canvas to draw on
+      };
+      row.appendChild(cell);
+    }
+    grid.appendChild(row);
   }
 }
 function openShapePopover() { buildShapeGrid(); $("shape-popover").classList.remove("hidden"); }
@@ -1223,6 +1341,8 @@ function refreshProps() {
   if (state.selectedIds.length > 1) { buildMultiProps(host); return; }
 
   if (obj.type === "text") buildTextProps(host, obj);
+  else if (obj.type === "satin") buildSatinProps(host, obj);
+  else if (obj.type === "running") buildRunningProps(host, obj);
   else buildShapeProps(host, obj);
 
   // Position helpers: one-click centering + a discoverability hint for the
@@ -1397,6 +1517,38 @@ function buildShapeProps(host, obj) {
   fillSel.onchange = () => { obj.params.fillMode = fillSel.value; markDirty(); needsRender = true; commit(); };
   row(host, "Style", fillSel);
 
+  buildColorRow(host, obj);
+}
+
+// Satin column: simple by default (just a width), detail if you want it.
+function buildSatinProps(host, obj) {
+  $("props-title").textContent = "Satin line";
+  row(host, "Width (mm)", numInput(obj.params.width ?? 4, 0.5, 0.5, (v) => { obj.params.width = Math.max(0.5, Math.min(10, v)); markDirty(); needsRender = true; commitSoon(); }));
+  row(host, "Density (mm)", numInput(obj.params.density ?? 0.4, 0.05, 0.2, (v) => { obj.params.density = Math.max(0.2, Math.min(1.2, v)); markDirty(); commitSoon(); }));
+  row(host, "Pull comp (mm)", numInput(obj.params.pull ?? 0.2, 0.1, 0, (v) => { obj.params.pull = Math.max(0, Math.min(1, v)); markDirty(); commitSoon(); }));
+  const u = document.createElement("label"); u.className = "check";
+  const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = obj.params.underlay !== false;
+  cb.onchange = () => { obj.params.underlay = cb.checked; markDirty(); commit(); };
+  u.append(cb, document.createTextNode(" Underlay (center run)"));
+  rowFull(host, "", u);
+  const hint = document.createElement("div"); hint.className = "prop-hint";
+  hint.textContent = "A real satin column: zig-zag rails across the line you drew.";
+  host.appendChild(hint);
+  buildColorRow(host, obj);
+}
+
+// Running stitch line: length + repeats (3 = bean stitch).
+function buildRunningProps(host, obj) {
+  $("props-title").textContent = "Run stitch";
+  row(host, "Stitch length (mm)", numInput(obj.params.stitchLength ?? 2.5, 0.25, 1, (v) => { obj.params.stitchLength = Math.max(1, Math.min(6, v)); markDirty(); commitSoon(); }));
+  const sel = document.createElement("select"); sel.className = "select";
+  sel.innerHTML = `<option value="1">Single</option><option value="3">Bean (3-pass)</option><option value="5">Heavy (5-pass)</option>`;
+  sel.value = String(obj.params.repeats || 1);
+  sel.onchange = () => { obj.params.repeats = parseInt(sel.value, 10); markDirty(); commit(); };
+  row(host, "Passes", sel);
+  const hint = document.createElement("div"); hint.className = "prop-hint";
+  hint.textContent = "Outlines & details. Bean stitch doubles back for a bolder line.";
+  host.appendChild(hint);
   buildColorRow(host, obj);
 }
 
@@ -1584,7 +1736,7 @@ $("font-modal").addEventListener("click", (e) => { if (e.target.id === "font-mod
 // ----------------------------------------------------------------- toolbar
 document.querySelectorAll(".tool").forEach((b) => b.addEventListener("click", () => setTool(b.dataset.tool)));
 [["chk-show-image", "showImage"], ["chk-show-stitches", "showStitches"], ["chk-show-jumps", "showJumps"],
- ["chk-show-points", "showPoints"], ["chk-show-grid", "showGrid"]].forEach(([id, key]) => {
+ ["chk-show-points", "showPoints"], ["chk-show-grid", "showGrid"], ["chk-show-hoop", "showHoop"]].forEach(([id, key]) => {
   const el = $(id); if (el) el.addEventListener("change", (e) => { view[key] = e.target.checked; needsRender = true; });
 });
 
@@ -1637,7 +1789,7 @@ $("file-json").onchange = (e) => {
       state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
       setMode("design");
       refreshObjectList(); refreshProps(); updateEmptyHint();
-      cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER);
+      cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER, view.showHoop ? 17 : 2);
       resetHistory();
       toast("Project loaded");
     } catch (err) { toast("Could not load file: " + err.message, true); }
@@ -1657,7 +1809,13 @@ function buildPreviewProducts() {
     b.onclick = () => { previewProduct = p.id; buildPreviewProducts(); drawPreview(); };
     host.appendChild(b);
   }
-  $("preview-custom").classList.toggle("hidden", getProduct(previewProduct).custom !== true);
+  // every product has adjustable real-world dimensions
+  const prod = getProduct(previewProduct);
+  const cu = state.units;
+  $("lbl-custom-w").textContent = prod.dims.wLabel || "Width";
+  $("lbl-custom-h").textContent = prod.dims.hLabel || "Height";
+  $("custom-w").value = +toUnit(prod.dims.w, cu).toFixed(1);
+  $("custom-h").value = +toUnit(prod.dims.h, cu).toFixed(1);
 }
 function drawPreview() {
   ensureCompiled();
@@ -1668,9 +1826,10 @@ function drawPreview() {
   const pctx = pc.getContext("2d");
   const product = getProduct(previewProduct);
   const cu = state.units;
-  const customW = fromUnit(parseFloat($("custom-w").value) || 6, cu);
-  const customH = fromUnit(parseFloat($("custom-h").value) || 4, cu);
-  renderPreview(pctx, compiled, product, { customW, customH });
+  const dims = { ...product.dims,
+    w: fromUnit(parseFloat($("custom-w").value) || 1, cu),
+    h: fromUnit(parseFloat($("custom-h").value) || 1, cu) };
+  renderPreview(pctx, compiled, product, { dims, customW: dims.w, customH: dims.h });
   const st = computeStats(compiled);
   $("preview-scale").textContent = st.width > 0 ? `— design ${fmt(st.width, cu)} × ${fmt(st.height, cu)}` : "";
   $("custom-unit").textContent = cu;
@@ -1684,6 +1843,34 @@ function openPreview() {
   requestAnimationFrame(drawPreview);
 }
 $("btn-preview").onclick = openPreview;
+
+// ----------------------------------------------------------------- 3D view
+// three.js loads lazily on first open, so the main app stays light.
+$("btn-3d").onclick = async () => {
+  ensureCompiled();
+  const st = computeStats(compiled);
+  if (st.stitches === 0) { toast("Nothing to view — render first.", true); return; }
+  $("view3d-modal").classList.remove("hidden");
+  toast("Building 3D threads…");
+  try {
+    const mod = await import("./view3d.js");
+    mod.open3DView(compiled, getHoop(state.hoopId), {
+      container: $("view3d-stage"),
+      play: $("view3d-play"),
+      scrub: $("view3d-scrub"),
+      speed: $("view3d-speed"),
+      counter: $("view3d-counter"),
+    });
+    window.__gs3d = true;
+  } catch (err) {
+    $("view3d-modal").classList.add("hidden");
+    toast("3D view failed: " + err.message, true);
+  }
+};
+$("view3d-close").onclick = async () => {
+  $("view3d-modal").classList.add("hidden");
+  try { (await import("./view3d.js")).close3DView(); } catch { /* not loaded */ }
+};
 $("preview-close").onclick = () => $("preview-modal").classList.add("hidden");
 $("preview-modal").addEventListener("click", (e) => { if (e.target.id === "preview-modal") e.currentTarget.classList.add("hidden"); });
 $("custom-w").oninput = drawPreview;
@@ -1740,7 +1927,7 @@ function updateSimColor(s) {
 function frame() {
   if (needsRender) {
     if (state.mode === "stitch") ensureCompiled();
-    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, snapLines, unit: UNITS[state.units] });
+    render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, snapGuides, drawing, unit: UNITS[state.units] });
     needsRender = false;
   }
   requestAnimationFrame(frame);

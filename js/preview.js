@@ -5,13 +5,26 @@
 // (mm). The design is scaled by its mm size relative to the item's real body
 // dimension, so a 100 mm SE700 design reads at a believable size on each item.
 
+// Every product has ADJUSTABLE real-world dimensions (mm) with sensible
+// medium/standard defaults; the design is composited at true scale against
+// whichever size the user dials in.
 export const PRODUCTS = [
-  // realW = the real-world width (mm) that the item's *body* spans (used to scale the design).
-  { id: "tshirt",  label: "Medium T-Shirt", draw: drawTshirt },
-  { id: "shoe",    label: "Sneaker",        draw: drawShoe },
-  { id: "towel",   label: "Bath Towel",     draw: drawTowel },
-  { id: "bathmat", label: "Bath Mat",       draw: drawBathmat },
-  { id: "custom",  label: "Custom Rectangle", draw: drawCustom, custom: true },
+  { id: "tshirt",  label: "T-Shirt",       draw: drawTshirt,
+    dims: { w: 530, h: 720, wLabel: "Chest width", hLabel: "Body length" } },
+  { id: "pocket",  label: "Pocket Tee",    draw: drawPocketTee,
+    dims: { w: 530, h: 720, wLabel: "Chest width", hLabel: "Body length" } },
+  { id: "socks",   label: "Socks",         draw: drawSocks,
+    dims: { w: 250, h: 300, wLabel: "Foot length", hLabel: "Sock height" } },
+  { id: "tote",    label: "Tote Bag",      draw: drawTote,
+    dims: { w: 380, h: 400, wLabel: "Bag width", hLabel: "Bag height" } },
+  { id: "shoe",    label: "Sneaker",       draw: drawShoe,
+    dims: { w: 300, h: 120, wLabel: "Shoe length", hLabel: "Upper height" } },
+  { id: "towel",   label: "Bath Towel",    draw: drawTowel,
+    dims: { w: 686, h: 980, wLabel: "Width", hLabel: "Length" } },
+  { id: "bathmat", label: "Bath Mat",      draw: drawBathmat,
+    dims: { w: 810, h: 510, wLabel: "Width", hLabel: "Height" } },
+  { id: "custom",  label: "Custom",        draw: drawCustom, custom: true,
+    dims: { w: 150, h: 100, wLabel: "Width", hLabel: "Height" } },
 ];
 
 export function getProduct(id) {
@@ -36,8 +49,10 @@ export function renderPreview(ctx, compiled, product, opts = {}) {
 
   // draw() returns the body rect (px) + spanMm (real width that rect spans) +
   // the embroidery zone center as a fraction of that rect.
+  const dims = opts.dims || { ...product.dims };
   const item = product.draw(ctx, box, {
-    customW: opts.customW || 300, customH: opts.customH || 200,
+    customW: opts.customW || dims.w || 300, customH: opts.customH || dims.h || 200,
+    dims,
   });
   const mmToPx = item.w / item.spanMm;
   const cxPx = item.x + item.w * item.zone.x;
@@ -98,7 +113,8 @@ function poly(ctx, pts, close = true) {
 }
 
 // ---------------- T-Shirt (medium: 530mm chest flat, 720mm length) ----------------
-function drawTshirt(ctx, box) {
+function drawTshirt(ctx, box, opts = {}) {
+  const chestMm = (opts.dims && opts.dims.w) || 530;
   const Wmm = 820, Hmm = 760, chest = 530, cx = 410;
   const { pp, M } = fit(box, Wmm, Hmm);
   const sideL = cx - chest / 2, sideR = cx + chest / 2;       // 145 / 675
@@ -152,11 +168,12 @@ function drawTshirt(ctx, box) {
   ctx.beginPath(); ctx.moveTo(M(cx - hemHalf + 12, hemY - 24).x, M(cx - hemHalf + 12, hemY - 24).y);
   ctx.quadraticCurveTo(M(cx, hemY - 10).x, M(cx, hemY - 10).y, M(cx + hemHalf - 12, hemY - 24).x, M(cx + hemHalf - 24, hemY - 24).y); ctx.stroke();
 
-  return { x: M(sideL, 0).x, y: M(0, shoY).y, w: chest * pp, h: (hemY - shoY) * pp, spanMm: chest, zone: { x: 0.31, y: 0.27 } };
+  return { x: M(sideL, 0).x, y: M(0, shoY).y, w: chest * pp, h: (hemY - shoY) * pp, spanMm: chestMm, zone: { x: 0.31, y: 0.27 } };
 }
 
 // ---------------- Sneaker (men's ~300mm length, low-top side profile) --------
-function drawShoe(ctx, box) {
+function drawShoe(ctx, box, opts = {}) {
+  const lenMm = (opts.dims && opts.dims.w) || 300;
   const Wmm = 320, Hmm = 168;
   const { pp, M } = fit(box, Wmm, Hmm);
   const ground = 150, midTop = 122, outTop = 140; // thin sole
@@ -235,12 +252,12 @@ function drawShoe(ctx, box) {
   ctx.closePath(); ctx.fillStyle = "#7f8a98"; ctx.fill();
   ctx.restore();
 
-  return { x: M(44, 0).x, y: M(0, 56).y, w: 246 * pp, h: (midTop - 56) * pp, spanMm: 252, zone: { x: 0.74, y: 0.62 } };
+  return { x: M(44, 0).x, y: M(0, 56).y, w: 246 * pp, h: (midTop - 56) * pp, spanMm: lenMm * 0.84, zone: { x: 0.74, y: 0.62 } };
 }
 
 // ---------------- Bath Towel (686mm wide, terry, dobby border) ----------------
-function drawTowel(ctx, box) {
-  const Wmm = 686, Hmm = 980;
+function drawTowel(ctx, box, opts = {}) {
+  const Wmm = (opts.dims && opts.dims.w) || 686, Hmm = (opts.dims && opts.dims.h) || 980;
   const { pp, M } = fit(box, Wmm, Hmm);
   const x = M(0, 0).x, y = M(0, 0).y, w = Wmm * pp, h = Hmm * pp;
 
@@ -268,8 +285,8 @@ function drawTowel(ctx, box) {
 }
 
 // ---------------- Bath Mat (810x510mm, plush, rounded) ----------------
-function drawBathmat(ctx, box) {
-  const Wmm = 810, Hmm = 510;
+function drawBathmat(ctx, box, opts = {}) {
+  const Wmm = (opts.dims && opts.dims.w) || 810, Hmm = (opts.dims && opts.dims.h) || 510;
   const { pp, M } = fit(box, Wmm, Hmm);
   const x = M(0, 0).x, y = M(0, 0).y, w = Wmm * pp, h = Hmm * pp;
 
@@ -307,6 +324,146 @@ function drawCustom(ctx, box, { customW, customH }) {
   ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = "#c2c9d2"; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
   return { x, y, w, h, spanMm: Wmm, zone: { x: 0.5, y: 0.5 } };
+}
+
+// ---------------- Pocket Tee (medium tee + left-chest pocket) ----------------
+function drawPocketTee(ctx, box, opts = {}) {
+  const item = drawTshirt(ctx, box, opts);
+  const mmToPx = item.w / item.spanMm;
+  const pw = 110 * mmToPx, ph = 115 * mmToPx;   // standard 110×115mm patch pocket
+  const pcx = item.x + item.w * 0.31, pcy = item.y + item.h * 0.27;
+  const px = pcx - pw / 2, py = pcy - ph * 0.45;
+  const pocket = () => {
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(px + pw, py);
+    ctx.lineTo(px + pw, py + ph * 0.72);
+    ctx.lineTo(px + pw / 2, py + ph);
+    ctx.lineTo(px, py + ph * 0.72);
+    ctx.closePath();
+  };
+  ctx.save();
+  pocket();
+  ctx.fillStyle = "rgba(228,233,240,0.95)"; ctx.fill();
+  ctx.strokeStyle = "#b7c0cb"; ctx.lineWidth = 1.5; ctx.stroke();
+  // topstitch detail just inside the pocket edge
+  ctx.setLineDash([4, 3]);
+  ctx.strokeStyle = "rgba(130,142,156,0.75)"; ctx.lineWidth = 1;
+  ctx.save();
+  ctx.translate(pcx, py + ph / 2); ctx.scale(0.94, 0.94); ctx.translate(-pcx, -(py + ph / 2));
+  pocket(); ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+  // the embroidery zone is the POCKET center
+  return { ...item, zone: { x: (pcx - item.x) / item.w, y: (pcy + ph * 0.02 - item.y) / item.h } };
+}
+
+// ---------------- Socks (crew pair; foot length × sock height adjustable) ----
+function drawSocks(ctx, box, opts = {}) {
+  const foot = (opts.dims && opts.dims.w) || 250;   // heel to toe
+  const sockH = (opts.dims && opts.dims.h) || 300;  // cuff to sole
+  const legW = Math.max(66, foot * 0.34);
+  const Wmm = foot + 80, Hmm = sockH + 70;
+  const { pp, M } = fit(box, Wmm, Hmm);
+
+  const sock = (ox, oy, base, edge, shade2) => {
+    const ankleY = oy + sockH - legW * 1.02;
+    const soleY = oy + sockH;
+    const toeX = ox + foot;
+    ctx.beginPath();
+    let p = M(ox, oy); ctx.moveTo(p.x, p.y);
+    p = M(ox + legW, oy); ctx.lineTo(p.x, p.y);                       // cuff top
+    p = M(ox + legW, ankleY); ctx.lineTo(p.x, p.y);                   // leg front
+    // instep down toward the toe
+    p = M(toeX - legW * 0.55, soleY - legW * 0.8);
+    ctx.quadraticCurveTo(M(ox + legW + 8, ankleY + legW * 0.5).x, M(ox + legW + 8, ankleY + legW * 0.5).y, p.x, p.y);
+    // toe cap
+    p = M(toeX, soleY - legW * 0.34);
+    ctx.quadraticCurveTo(M(toeX - 6, soleY - legW * 0.72).x, M(toeX - 6, soleY - legW * 0.72).y, p.x, p.y);
+    p = M(toeX - legW * 0.28, soleY);
+    ctx.quadraticCurveTo(M(toeX + 4, soleY - 4).x, M(toeX + 4, soleY - 4).y, p.x, p.y);
+    // sole back to the heel
+    p = M(ox + legW * 0.42, soleY); ctx.lineTo(p.x, p.y);
+    // heel round
+    p = M(ox, ankleY + legW * 0.28);
+    ctx.quadraticCurveTo(M(ox - legW * 0.28, soleY - 4).x, M(ox - legW * 0.28, soleY - 4).y, p.x, p.y);
+    ctx.lineTo(M(ox, oy).x, M(ox, oy).y);                             // leg back up to cuff
+    ctx.closePath();
+    const g = ctx.createLinearGradient(M(ox, 0).x, 0, M(ox + legW + foot * 0.4, 0).x, 0);
+    g.addColorStop(0, base); g.addColorStop(1, shade2);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = edge; ctx.lineWidth = 1.5; ctx.stroke();
+    // ribbed cuff
+    ctx.strokeStyle = "rgba(150,160,172,0.55)"; ctx.lineWidth = 1.2;
+    for (let i = 1; i <= 3; i++) {
+      const yy = oy + i * 7;
+      ctx.beginPath(); ctx.moveTo(M(ox + 2, yy).x, M(ox + 2, yy).y); ctx.lineTo(M(ox + legW - 2, yy).x, M(ox + legW - 2, yy).y); ctx.stroke();
+    }
+    // heel/toe shading patches
+    ctx.fillStyle = "rgba(170,180,192,0.35)";
+    ctx.beginPath(); ctx.ellipse(M(ox + legW * 0.16, soleY - legW * 0.26).x, M(ox + legW * 0.16, soleY - legW * 0.26).y, legW * 0.34 * pp, legW * 0.3 * pp, 0.6, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(M(toeX - legW * 0.2, soleY - legW * 0.34).x, M(toeX - legW * 0.2, soleY - legW * 0.34).y, legW * 0.3 * pp, legW * 0.26 * pp, -0.4, 0, 7); ctx.fill();
+  };
+
+  groundShadow(ctx, M(Wmm / 2, sockH + 44).x, M(Wmm / 2, sockH + 52).y, foot * pp * 0.55, 12);
+  sock(52, 16, "#e3e8ee", "#c0c8d2", "#cdd5de");   // back sock
+  sock(22, 36, "#fbfcfd", "#b7c0ca", "#dde3ea");   // front sock
+  // Design sits on the OUTER LEG of the front sock.
+  const bodyX = M(22, 0).x, bodyY = M(0, 36).y;
+  return { x: bodyX, y: bodyY, w: foot * pp, h: sockH * pp, spanMm: foot,
+           zone: { x: (legW * 0.5) / foot, y: 0.34 } };
+}
+
+// ---------------- Tote Bag (canvas; width × height adjustable) ----------------
+function drawTote(ctx, box, opts = {}) {
+  const W = (opts.dims && opts.dims.w) || 380;
+  const H = (opts.dims && opts.dims.h) || 400;
+  const handleRise = Math.min(200, H * 0.45);
+  const Wmm = W + 70, Hmm = H + handleRise + 40;
+  const { pp, M } = fit(box, Wmm, Hmm);
+  const bx = 35, by = handleRise + 20;
+
+  groundShadow(ctx, M(bx + W / 2, by + H).x, M(bx + W / 2, by + H + 10).y, W * pp * 0.52, 16);
+
+  // handles (behind the bag top): two straps looping up
+  const strapW = Math.max(3, 16 * pp);
+  const handle = (x0, x1) => {
+    ctx.beginPath();
+    let p = M(x0, by + 6); ctx.moveTo(p.x, p.y);
+    ctx.bezierCurveTo(M(x0, 26).x, M(x0, 26).y, M(x1, 26).x, M(x1, 26).y, M(x1, by + 6).x, M(x1, by + 6).y);
+    ctx.strokeStyle = "#cfc4a2"; ctx.lineWidth = strapW; ctx.lineCap = "round"; ctx.stroke();
+    ctx.strokeStyle = "rgba(120,110,80,0.45)"; ctx.lineWidth = Math.max(1, strapW * 0.2); ctx.stroke();
+  };
+  handle(bx + W * 0.28, bx + W * 0.72);
+
+  // bag body — natural canvas
+  const x = M(bx, by).x, y = M(bx, by).y, w = W * pp, h = H * pp;
+  ctx.save();
+  roundRectPath(ctx, x, y, w, h, 6);
+  const g = ctx.createLinearGradient(x, 0, x + w, 0);
+  g.addColorStop(0, "#ddd3b4"); g.addColorStop(0.5, "#efe7cd"); g.addColorStop(1, "#d8cdae");
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = "#b3a884"; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.clip();
+  // canvas weave (faint)
+  ctx.strokeStyle = "rgba(140,128,95,0.16)"; ctx.lineWidth = 1;
+  for (let mx = 8; mx < W; mx += 8) { ctx.beginPath(); ctx.moveTo(M(bx + mx, by).x, y); ctx.lineTo(M(bx + mx, by).x, y + h); ctx.stroke(); }
+  for (let my = 8; my < H; my += 8) { ctx.beginPath(); ctx.moveTo(x, M(0, by + my).y); ctx.lineTo(x + w, M(0, by + my).y); ctx.stroke(); }
+  // top hem band + strap attachments
+  ctx.fillStyle = "rgba(190,178,144,0.55)";
+  ctx.fillRect(x, y, w, Math.max(3, 22 * pp));
+  ctx.fillStyle = "#cfc4a2"; ctx.strokeStyle = "#a99e7b";
+  for (const hx of [bx + W * 0.28, bx + W * 0.72]) {
+    const sx = M(hx, by).x;
+    ctx.fillRect(sx - strapW / 2, y, strapW, Math.max(4, 30 * pp));
+    ctx.strokeRect(sx - strapW / 2, y, strapW, Math.max(4, 30 * pp));
+  }
+  // bottom gusset crease
+  ctx.strokeStyle = "rgba(140,128,95,0.4)"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x + 6, M(0, by + H - 26).y); ctx.lineTo(x + w - 6, M(0, by + H - 26).y); ctx.stroke();
+  ctx.restore();
+
+  return { x, y, w, h, spanMm: W, zone: { x: 0.5, y: 0.52 } };
 }
 
 function roundRectPath(ctx, x, y, w, h, r) {

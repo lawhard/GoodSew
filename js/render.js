@@ -29,11 +29,13 @@ const ACCENT = "#2e7df6";
 
 export class Camera {
   constructor() { this.pxPerMm = 3; this.panX = 0; this.panY = 0; }
-  fit(hoop, cw, ch, ruler = 0) {
+  // padMm reserves world-space around the field (e.g. for the physical hoop
+  // frame drawing) so the whole hoop fits in view at the default zoom.
+  fit(hoop, cw, ch, ruler = 0, padMm = 2) {
     const margin = 28;
     const availW = cw - ruler - margin * 2;
     const availH = ch - ruler - margin * 2;
-    this.pxPerMm = Math.min(availW / hoop.w, availH / hoop.h);
+    this.pxPerMm = Math.min(availW / (hoop.w + padMm * 2), availH / (hoop.h + padMm * 2));
     this.panX = ruler + margin + (availW - hoop.w * this.pxPerMm) / 2;
     this.panY = ruler + margin + (availH - hoop.h * this.pxPerMm) / 2;
   }
@@ -96,6 +98,7 @@ export function render(ctx, state, compiled, sim, opts) {
 
   const o = cam.toScreen({ x: 0, y: 0 });
   const fw = hoop.w * cam.pxPerMm, fh = hoop.h * cam.pxPerMm;
+  if (view.showHoop) drawHoopFrame(ctx, cam, o, fw, fh, TH);
   ctx.fillStyle = TH.field;
   ctx.fillRect(o.x, o.y, fw, fh);
 
@@ -112,20 +115,29 @@ export function render(ctx, state, compiled, sim, opts) {
 
   ctx.strokeStyle = TH.fieldBorder; ctx.lineWidth = 1.5;
   ctx.strokeRect(o.x, o.y, fw, fh);
-  const snap = opts.snapLines || {};
   ctx.strokeStyle = TH.cross; ctx.lineWidth = 1;
   ctx.beginPath();
-  if (!snap.x) { ctx.moveTo(o.x + fw / 2, o.y); ctx.lineTo(o.x + fw / 2, o.y + fh); }
-  if (!snap.y) { ctx.moveTo(o.x, o.y + fh / 2); ctx.lineTo(o.x + fw, o.y + fh / 2); }
+  ctx.moveTo(o.x + fw / 2, o.y); ctx.lineTo(o.x + fw / 2, o.y + fh);
+  ctx.moveTo(o.x, o.y + fh / 2); ctx.lineTo(o.x + fw, o.y + fh / 2);
   ctx.stroke();
-  // Highlight a centerline while an object is magnetically snapped to it.
-  if (snap.x || snap.y) {
+  // Smart alignment guides while dragging: hoop-center snaps in accent blue,
+  // object-edge/center snaps in magenta — spanning both aligned objects.
+  for (const g of (opts.snapGuides || [])) {
     ctx.save();
-    ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5;
-    ctx.shadowColor = ACCENT; ctx.shadowBlur = 6;
+    const col = g.kind === "hoop" ? ACCENT : "#e83e8c";
+    ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+    ctx.shadowColor = col; ctx.shadowBlur = 5;
+    ctx.setLineDash([6, 4]);
     ctx.beginPath();
-    if (snap.x) { ctx.moveTo(o.x + fw / 2, o.y - 6); ctx.lineTo(o.x + fw / 2, o.y + fh + 6); }
-    if (snap.y) { ctx.moveTo(o.x - 6, o.y + fh / 2); ctx.lineTo(o.x + fw + 6, o.y + fh / 2); }
+    if (g.axis === "v") {
+      const sx = cam.toScreen({ x: g.pos, y: 0 }).x;
+      const y0 = cam.toScreen({ x: 0, y: g.a }).y, y1 = cam.toScreen({ x: 0, y: g.b }).y;
+      ctx.moveTo(sx, y0 - 8); ctx.lineTo(sx, y1 + 8);
+    } else {
+      const sy = cam.toScreen({ x: 0, y: g.pos }).y;
+      const x0 = cam.toScreen({ x: g.a, y: 0 }).x, x1 = cam.toScreen({ x: g.b, y: 0 }).x;
+      ctx.moveTo(x0 - 8, sy); ctx.lineTo(x1 + 8, sy);
+    }
     ctx.stroke();
     ctx.restore();
   }
@@ -142,8 +154,11 @@ export function render(ctx, state, compiled, sim, opts) {
     const withHandles = ids.length === 1; // resize/rotate handles only for a single object
     for (const id of ids) {
       const o = state.objects.find((x) => x.id === id);
-      if (o && o.visible) drawSelection(ctx, cam, o, withHandles);
+      // spine/point objects (satin/run/drawn regions without a box) are
+      // move-only: selection outline, no resize handles
+      if (o && o.visible) drawSelection(ctx, cam, o, withHandles && (o.box != null || o.type === "text"));
     }
+    if (opts.drawing) drawDraft(ctx, cam, opts.drawing);
   }
 
   drawGuides(ctx, cam, state, cw, ch, opts.hoverGuide);
@@ -167,6 +182,27 @@ function pathFromContours(ctx, cam, contours, ax = 0, ay = 0) {
 function drawObjectsSolid(ctx, cam, state, TH) {
   for (const obj of state.objects) {
     if (!obj.visible) continue;
+    // Manual-digitized line objects: satin column band / running dash line.
+    if (obj.type === "satin" && obj.points.length >= 2) {
+      const wpx = Math.max(2, (obj.params.width || 4) * cam.pxPerMm);
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      obj.points.forEach((p, i) => { const s = cam.toScreen(p); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+      ctx.lineWidth = wpx; ctx.strokeStyle = obj.color; ctx.stroke();
+      ctx.lineWidth = 1; ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+      continue;
+    }
+    if (obj.type === "running" && obj.points.length >= 2) {
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.beginPath();
+      obj.points.forEach((p, i) => { const s = cam.toScreen(p); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+      ctx.lineWidth = Math.max(1.5, 0.7 * cam.pxPerMm);
+      ctx.strokeStyle = obj.color;
+      ctx.setLineDash([Math.max(4, 2.5 * cam.pxPerMm), Math.max(3, 1.2 * cam.pxPerMm)]);
+      ctx.stroke(); ctx.setLineDash([]);
+      continue;
+    }
     let path;
     if (obj.type === "text" && obj._glyphs) {
       const ax = obj.points[0] ? obj.points[0].x : 0;
@@ -185,6 +221,40 @@ function drawObjectsSolid(ctx, cam, state, TH) {
       ctx.lineWidth = 1; ctx.strokeStyle = TH.objStroke; ctx.stroke(path);
     }
   }
+}
+
+// Live preview of an in-progress manual drawing (satin / run / region).
+function drawDraft(ctx, cam, d) {
+  const pts = d.cursor ? [...d.points, d.cursor] : d.points;
+  if (!pts.length) return;
+  ctx.save();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  if (d.type === "satin") {
+    ctx.beginPath();
+    pts.forEach((p, i) => { const s = cam.toScreen(p); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+    ctx.lineWidth = Math.max(2, 4 * cam.pxPerMm);
+    ctx.strokeStyle = "rgba(46,125,246,0.30)";
+    ctx.stroke();
+  } else if (d.type === "poly" && pts.length >= 3) {
+    ctx.beginPath();
+    pts.forEach((p, i) => { const s = cam.toScreen(p); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(46,125,246,0.18)";
+    ctx.fill();
+  }
+  // path line
+  ctx.beginPath();
+  pts.forEach((p, i) => { const s = cam.toScreen(p); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
+  if (d.type === "poly" && pts.length >= 3) ctx.closePath();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = ACCENT;
+  ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+  // placed points
+  ctx.fillStyle = ACCENT;
+  for (const p of d.points) {
+    const s = cam.toScreen(p);
+    ctx.beginPath(); ctx.arc(s.x, s.y, 3.5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawSelection(ctx, cam, obj, withHandles = true) {
@@ -296,6 +366,60 @@ function drawRulers(ctx, cam, cw, ch, cursor, unit, TH) {
     if (cursor.sx >= RULER) ctx.fillRect(cursor.sx - 0.5, 0, 1.5, RULER);
     if (cursor.sy >= RULER) ctx.fillRect(0, cursor.sy - 0.5, RULER, 1.5);
   }
+}
+
+// The physical SE700 4×4" hoop drawn around the sewing field: outer plastic
+// frame with rounded corners, inner ring, fabric peeking between, and the
+// tightening screw on the left — so you always see the real hooping context.
+function drawHoopFrame(ctx, cam, o, fw, fh, TH) {
+  const mm = cam.pxPerMm;
+  const rim = 9 * mm;            // plastic frame width
+  const gap = 2.5 * mm;          // visible fabric between ring and field
+  const r0 = 10 * mm;            // outer corner radius
+  const x0 = o.x - rim - gap, y0 = o.y - rim - gap;
+  const w0 = fw + (rim + gap) * 2, h0 = fh + (rim + gap) * 2;
+  const rr = (x, y, w, h, r) => {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  };
+  ctx.save();
+  // fabric under the whole hoop area
+  rr(x0 - 4 * mm, y0 - 4 * mm, w0 + 8 * mm, h0 + 8 * mm, r0 + 4 * mm);
+  ctx.fillStyle = TH.field;
+  ctx.fill();
+  // outer plastic frame
+  rr(x0, y0, w0, h0, r0);
+  ctx.fillStyle = "#eceff4";
+  ctx.strokeStyle = "#b9c0cc"; ctx.lineWidth = Math.max(1, 0.5 * mm);
+  ctx.fill(); ctx.stroke();
+  // inner opening (fabric shows through)
+  rr(o.x - gap, o.y - gap, fw + gap * 2, fh + gap * 2, 4 * mm);
+  ctx.fillStyle = TH.field;
+  ctx.fill();
+  ctx.strokeStyle = "#c6ccd6"; ctx.lineWidth = Math.max(1, 0.4 * mm);
+  ctx.stroke();
+  // tightening screw block on the left rim
+  const sy = o.y + fh / 2;
+  ctx.fillStyle = "#dde2ea"; ctx.strokeStyle = "#aab2c0"; ctx.lineWidth = 1;
+  rr(x0 - 7 * mm, sy - 7 * mm, 9 * mm, 14 * mm, 2 * mm);
+  ctx.fill(); ctx.stroke();
+  // screw
+  ctx.beginPath(); ctx.arc(x0 - 2.5 * mm, sy, 2.2 * mm, 0, Math.PI * 2);
+  ctx.fillStyle = "#c2c9d4"; ctx.fill(); ctx.strokeStyle = "#98a1b0"; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x0 - 2.5 * mm - 1.4 * mm, sy); ctx.lineTo(x0 - 2.5 * mm + 1.4 * mm, sy);
+  ctx.strokeStyle = "#7d8798"; ctx.lineWidth = Math.max(1, 0.35 * mm); ctx.stroke();
+  // brand tab on top rim
+  ctx.fillStyle = "#9aa4b4";
+  ctx.font = `${Math.max(7, 3 * mm)}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText("brother SE700 · 4\" × 4\"", o.x + fw / 2, y0 + rim * 0.62);
+  ctx.restore();
 }
 
 function drawGrid(ctx, cam, hoop, o, fw, fh, TH) {
