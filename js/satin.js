@@ -1,5 +1,6 @@
 // Authored paired rails. Matching node pairs are direction guides, in mm.
-import {dist,resample,rotatePoint} from './geometry.js';
+import {dist,rotatePoint} from './geometry.js';
+import {sampleRunningPath} from './running.js';
 const mix=(a,b,t)=>({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
 export function validateRails(rails,minWidth=.05){
  if(!Array.isArray(rails)||rails.length!==2||rails[0].length<2||rails[0].length!==rails[1].length||rails[0].length>2000)throw Error('Use two rails with 2–2,000 matching direction nodes.');
@@ -44,18 +45,30 @@ export function generateRailColumn(obj){
  const rails=obj._rails;validateRails(rails);
  const pitch=Math.max(.25,Math.min(1.2,obj.params.density||.4));
  const maxThrow=10;
- const stations=[],warnings=[];let maxWidth=0;
- // Interpolate each authored direction interval, respecting the longer rail.
+ const stations=[];
+ // Carry distance across direction nodes. Rounding each interval up independently
+ // makes identical rails denser simply because their artwork has more nodes.
+ const intervals=[];let total=0;
  for(let i=0;i<rails[0].length-1;i++){
-  const n=Math.max(1,Math.ceil(Math.max(dist(rails[0][i],rails[0][i+1]),dist(rails[1][i],rails[1][i+1]))/(pitch/2)));
-  if(stations.length+n>100000)throw Error('Satin column is too dense or too long.');
-  for(let j=0;j<n;j++)stations.push([mix(rails[0][i],rails[0][i+1],j/n),mix(rails[1][i],rails[1][i+1],j/n)]);
+  const length=Math.max(dist(rails[0][i],rails[0][i+1]),dist(rails[1][i],rails[1][i+1]));
+  if(length>1e-12){intervals.push({i,start:total,length});total+=length;}
+  if(dist(rails[0][i],rails[1][i])>maxThrow)throw Error('Satin throw exceeds 10 mm. Split the column or use fill.');
  }
- stations.push([rails[0].at(-1),rails[1].at(-1)]);
- if(stations.length>100000)throw Error('Satin column is too dense or too long.');
+ if(dist(rails[0].at(-1),rails[1].at(-1))>maxThrow)throw Error('Satin throw exceeds 10 mm. Split the column or use fill.');
+ if(!intervals.length)throw Error('Satin rails need a nonzero length.');
+ // Evenly distribute the final residual instead of adding a tiny terminal row.
+ const steps=Math.max(1,Math.ceil(total/(pitch/2)-1e-9));
+ if(steps+1>100000)throw Error('Satin column is too dense or too long.');
+ let interval=0;
+ for(let k=0;k<=steps;k++){
+  const s=total*k/steps;
+  while(interval<intervals.length-1&&s>intervals[interval].start+intervals[interval].length)interval++;
+  const {i,start,length}=intervals[interval],t=Math.max(0,Math.min(1,(s-start)/length));
+  stations.push([mix(rails[0][i],rails[0][i+1],t),mix(rails[1][i],rails[1][i+1],t)]);
+ }
  let side=0;const top=[],lastRail=[null,null];
  for(const pair of stations){
-  const w=dist(...pair);maxWidth=Math.max(maxWidth,w);
+  const w=dist(...pair);
   if(w>maxThrow)throw Error('Satin throw exceeds 10 mm. Split the column or use fill.');
   const pull=Math.max(0,Math.min(.5,obj.params.pull||0));
   let p=mix(pair[side],pair[1-side],-pull/w);
@@ -67,7 +80,8 @@ export function generateRailColumn(obj){
  const path=[];
  if(obj.params.underlay){
   const mids=stations.map(p=>mix(...p,.5));
-  const walk=resample(mids,2);
+  // Keep support under the band instead of shortcutting through tight curves.
+  const walk=sampleRunningPath(mids,2,.15);
   path.push(...walk,...walk.slice(0,-1).reverse());
  }
  path.push(...top);path._trimBefore=true;

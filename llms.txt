@@ -1,0 +1,32 @@
+# Good Sew digitizing guidance
+
+Revision: 2026-09-07-sewout-1
+
+Comparison of a 50.4 × 44.6 mm black line portrait with 19.6 × 25.6 mm pinecone and 23.4 × 25.6 mm maple PES files and their sew-outs. The owner confirmed the same fabric, stabilizer, needle and thread weight/brand; thread colors differed. This is a small observed comparison, not a universal material calibration.
+
+Read get_design before editing and follow its digitizingGuidance. Preserve approved likeness and work in final-size millimeters. Scaling artwork requires re-digitizing and inspecting features; scaling finished PES stitches is not equivalent.
+
+Choose a stitch structure for each feature: directional satin bands for bold curves, coherent tatami for broad areas, running lines for fine accents. Give important outlines width in the geometry; repeated passes along a hairline do not create satin sheen.
+
+For small portraits on textured woven fabric, remove tiny sawtooth fur turns while preserving ears, eye positions, muzzle and expression. Use fewer readable tufts, a clear outline/detail line-weight hierarchy, and deliberate negative spaces. Do not trace every raster edge or convert every line indiscriminately to satin.
+
+Treat dimensions as trial starting points for ordinary 40-weight thread: important satin bands around 1–1.5 mm or wider where the artwork allows; finer lines as single/double runs; paired-rail cycle spacing about 0.4–0.45 mm; gentle running stitches about 1.8–2.5 mm, shortened only where curvature needs it. Narrower columns and tiny highlights need a sew-out. These are not machine limits or guaranteed material settings.
+
+Good Sew paired-rail density is full-cycle spacing (left → right → left). Nodes control direction, not density. Distribute direction changes smoothly, avoid crossed rails, spread inside-corner punctures, and split abrupt corners or overly wide columns. The 10 mm throw cap is an application limit. Legacy center-spine satin uses a different spacing convention; prefer paired rails for precise work.
+
+For running lines, params.returnPass=true makes a whole-path double run; repeats=3 makes a bean stitch with a reversal at every segment. Short, heavily retraced lines can appear knotted or beaded. Use params.curveTolerance=0.15 as an optional starting point to follow curves; lower tolerance adds stitches. Simplify unsuitable tiny geometry rather than demanding ever shorter stitches. Zero preserves legacy sampling.
+
+Plan support and order: modest center-walk underlay for narrow satin; broad fill before finishing detail; minimize redundant fill layers and stitch only necessary junction overlap. Fill params.underlayStyle="edge" selects light edge-only support instead of an extra sparse fill layer. Avoid converging a whole eye or nose into a tiny radial hole; use directional sections and preserve intentional highlights. Tatami spacing is the gap between single rows, unlike paired-rail full-cycle spacing. Underlay, fill spacing and pull compensation must be tuned from actual fabric results.
+
+Reduce disconnected islands and exposed travel when artwork permits. Never stitch across open fabric just to avoid a jump. Retain tie-ins/offs at real starts and cuts. SE700 trim commands do not guarantee that internal jump threads are cut automatically.
+
+Use generate_stitches, its object-specific digitizingReview, inspect_region, and fixed top/angled previews. Judge actual-size readability as well as magnified stitch geometry. A high local needle count or many short stitches is an inspection cue, not automatic failure: the successful pinecone had more short stitches and a higher local count than the portrait. Do not globally thin a design or increase density to chase a warning or a stitch-count target.
+
+Export, decode the actual PES, verify dimensions, origin, color blocks, travel and full stitch extent. Keep the corrected PES origin metadata. A pretty vector picture or 3D render is not verification of sewability. Thread Lab estimates appearance; it does not simulate thread tension, fabric deformation, bobbin pickup or machine dynamics.
+
+For each physical test, record machine, final size, fabric, stabilizer, needle, thread weight/brand, speed and settings, then compare front/back photos and change one class of variables at a time. Separate observed faults from inferred causes. Pale flecks or loops in a photo do not prove a tension diagnosis; do not prescribe a bobbin-tension adjustment from that alone. Do not claim a revision is physically validated until it has been sewn.
+
+Sources:
+- Ink/Stitch — satin columns, spacing, compensation and underlay: https://inkstitch.org/docs/stitches/satin-column/
+- Ink/Stitch — running/bean stitches and curve tolerance: https://inkstitch.org/docs/stitches/running-stitch/
+- Brother SE700 operation manual: https://download.brother.com/welcome/doch102582/888p10_om01en.pdf

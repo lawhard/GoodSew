@@ -2,8 +2,8 @@ import { computeStats } from "./stats.js";
 import { SE700 } from "./hoop.js";
 
 export function analyzeQuality(compiled, hoop = SE700.field) {
-  const plan = compiled.plan || [], warnings = [];
-  let short = 0, long = 0, maxLen = 0, prev = null, invalid = 0;
+  const plan = compiled.plan || [], warnings = [...(compiled.digitizingReview?.warnings || [])];
+  let short = 0, long = 0, maxLen = 0, prev = compiled.initialPosition || null, invalid = 0;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const cells = new Map();
   for (const s of plan) {
@@ -16,13 +16,13 @@ export function analyzeQuality(compiled, hoop = SE700.field) {
       if (prev) {
         const d = Math.hypot(s.x - prev.x, s.y - prev.y);
         maxLen = Math.max(maxLen, d);
-        if (d > 0.05 && d < 0.3) short++;
+        if (d > 0.05 && d < 0.3 - 1e-8) short++;
         if (d > 12.15) long++;
       }
       const key = `${Math.floor(s.x / 2)},${Math.floor(s.y / 2)}`;
       cells.set(key, (cells.get(key) || 0) + 1);
       prev = s;
-    } else prev = null;
+    } else if (s.cmd === "jump") prev = s;
   }
   const st = computeStats(compiled);
   const add = (sev, msg) => warnings.push({ sev, msg });
@@ -37,12 +37,12 @@ export function analyzeQuality(compiled, hoop = SE700.field) {
   else if (st.stitches && (width > hoop.w - 4 || height > hoop.h - 4)) add("warn", "Stitches are close to the hoop edge. Fit to hoop leaves a 2 mm margin.");
   if (st.stitches > SE700.maxStitches) add("error", `This pattern exceeds the SE700 limit of ${SE700.maxStitches.toLocaleString()} stitches. Reduce size or increase row spacing.`);
   if (compiled.colors.length > SE700.maxColorBlocks) add("error", "PES supports at most 256 thread blocks. Reduce thread changes.");
-  if (short) add(short > 40 ? "warn" : "info", `${short} very short stitches (<0.3 mm). Inspect tiny details or enlarge the lettering.`);
+  if (short) add(short > 40 ? "warn" : "info", `${short} very short stitches (<0.3 mm). Inspect fine details and tight corners; some may be intentional tie stitches.`);
   if (long) add("error", `${long} stitches exceed the 12.1 mm export limit.`);
   const dense = [...cells.values()].filter(n => n > 60).length;
-  if (dense) add("warn", `${dense} crowded 2 mm areas. Check overlapping layers, tight corners, and small lettering; test on scrap.`);
+  if (dense) add("warn", `${dense} areas exceed 60 needle points per 2 × 2 mm. This is a screening heuristic, not a fabric safety limit. Inspect layers and tight corners; purposeful satin can also reach this count.`);
   if (st.jumps > 1) add("info", `${st.jumps} travel moves. Jump threads may need manual cutting on the SE700; trim commands do not guarantee a cut.`);
-  return { warnings, short, long, maxLen, valid: !warnings.some(w => w.sev === "error") };
+  return { warnings, short, long, maxLen, peakNeedlesPer2mmCell: [...cells.values()].reduce((peak,n)=>Math.max(peak,n),0), digitizingReview: compiled.digitizingReview || null, valid: !warnings.some(w => w.sev === "error") };
 }
 
 export function assertExportable(compiled) {

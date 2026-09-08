@@ -18,6 +18,7 @@ export function parsePES(input, filename='Embroidery.pes') {
   if(blockLength<17||end>bytes.length||bytes[block+5]!==0x31||bytes[block+6]!==0xff||bytes[block+7]!==0xf0)throw new Error('The PEC stitch block is truncated or invalid.');
   const count=bytes[start+48]+1;
   const warnings=[],custom=readThreadChart(bytes,magic,start,warnings);
+  if (magic === '#PES0001' && start === 22) warnings.push('This file omits PES layout records. The centered stitch preview cannot confirm machine placement; re-export from Good Sew before sewing if your Brother preview is clipped.');
   const palette=Array.from(bytes.subarray(start+49,start+49+count));
   let chartIndex=0;const mapped=new Map();
   const colors=palette.map((index,i)=>{
@@ -55,7 +56,23 @@ export function parsePES(input, filename='Embroidery.pes') {
   }
   if(!finished)throw new Error('The file is missing its end-of-pattern command.');
   if(!stitches)throw new Error('This file contains no stitches to preview.');
-  const stitchPoints=plan.filter(s=>s.cmd==='stitch'),bounds=bbox(stitchPoints);
+  // Current Brother/Pystitch PEC framing carries an origin record followed
+  // by the real initial jump. Older Good Sew/pyembroidery files lack it.
+  // Decode both for compatibility, but do not present the origin record as
+  // an extra machine travel move. Its translated extents must match PEC.
+  let stitchPoints=plan.filter(s=>s.cmd==='stitch'),bounds=bbox(stitchPoints);
+  const hasOriginRecord=plan[0]?.cmd==='jump' && plan[1]?.cmd==='jump'
+    && (bytes[block+16]&0xf0)===0x90 && (bytes[block+18]&0xf0)===0x90
+    && Math.abs(bounds.minX)<.001 && Math.abs(bounds.minY)<.001
+    && Math.abs(bounds.w-view.getUint16(block+8,true)/10)<.101
+    && Math.abs(bounds.h-view.getUint16(block+10,true)/10)<.101;
+  if(hasOriginRecord) {
+    const origin=plan.shift();
+    for(const s of plan){s.x-=origin.x;s.y-=origin.y;}
+    stitchPoints=plan.filter(s=>s.cmd==='stitch');bounds=bbox(stitchPoints);
+  } else if(bounds.minX<-.1 || bounds.minY<-.1) {
+    warnings.push('PEC origin record is missing or could not be verified. The viewer centers stitches automatically; re-export before sewing if the machine shows a clipped or shifted design.');
+  }
   if(bounds.w>2000||bounds.h>2000)throw new Error('The design is too large for this embroidery viewer (2,000 mm maximum).');
   // Center the decoded design in the displayed SE700 field without resizing it.
   const ox=50-(bounds.minX+bounds.maxX)/2,oy=50-(bounds.minY+bounds.maxY)/2;
@@ -64,7 +81,7 @@ export function parsePES(input, filename='Embroidery.pes') {
   if(bounds.w>100||bounds.h>100||stitches>100000)warnings.push('Preview only: this pattern exceeds the SE700 size or stitch-count limit.');
   const used=colors.slice(0,ci+1);
   if(used.some(c=>c.source==='PEC palette'))warnings.push('Some colors use the limited PEC palette. Change the preview spool colors if they differ from your thread.');
-  return {plan,colors:used,bounds:centered,initialPosition:{x:ox,y:oy},metadata:{filename,name:ascii(start+3,16)||filename,format:magic.slice(1),stitches,colorBlocks:used.length,colorSource:custom.length?'PES thread table when available':'Brother PEC palette',warnings}};
+  return {plan,colors:used,bounds:centered,initialPosition:{x:ox,y:oy},metadata:{filename,name:ascii(start+3,16)||filename,format:magic.slice(1),stitches,colorBlocks:used.length,pecOriginRecord:hasOriginRecord,colorSource:custom.length?'PES thread table when available':'Brother PEC palette',warnings}};
 }
 
 function readThreadChart(bytes,magic,limit,warnings) {

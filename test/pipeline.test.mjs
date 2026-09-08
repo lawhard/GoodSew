@@ -41,13 +41,15 @@ ok(bytes.length > 600, `file is ${bytes.length} bytes`);
 
 const magic = String.fromCharCode(...bytes.slice(0, 8));
 ok(magic === "#PES0001", `magic '${magic}'`);
+// The PEC block sits wherever the header pointer says (v0.12+ writes full PES
+// header sections before it, so it is no longer at a fixed offset 22).
 const pecPtr = bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24);
-ok(pecPtr === 22, `PEC pointer = ${pecPtr} (expect 22)`);
-const la = String.fromCharCode(...bytes.slice(22, 25));
+ok(pecPtr >= 22 && pecPtr < bytes.length, `PEC pointer ${pecPtr} within file`);
+const la = String.fromCharCode(...bytes.slice(pecPtr, pecPtr + 3));
 ok(la === "LA:", `PEC label '${la}'`);
-// icon stride/height at fixed offset after 20(LA)+14 = pecStart(22)+34 = 56
-ok(bytes[22 + 34] === 0x06, "icon stride 0x06");
-ok(bytes[22 + 35] === 0x26, "icon height 0x26 (38)");
+// icon stride/height at fixed offset after 20(LA)+14 = pecStart+34
+ok(bytes[pecPtr + 34] === 0x06, "icon stride 0x06");
+ok(bytes[pecPtr + 35] === 0x26, "icon height 0x26 (38)");
 ok(bytes.includes(0xff), "stream contains 0xFF end marker");
 // color change marker FE B0 must appear
 let feb0 = false;
@@ -58,7 +60,7 @@ ok(feb0, "contains FE B0 color-change marker");
 console.log("PEC stream round-trip:");
 // locate stitch block: after header padding. We know structure: find '31 FF F0'.
 let bp = -1;
-for (let i = 22 + 34; i < bytes.length - 3; i++) {
+for (let i = pecPtr + 34; i < bytes.length - 3; i++) {
   if (bytes[i] === 0x31 && bytes[i + 1] === 0xff && bytes[i + 2] === 0xf0) { bp = i + 3; break; }
 }
 ok(bp > 0, "found 31 FF F0 marker");

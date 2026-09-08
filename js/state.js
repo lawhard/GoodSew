@@ -184,6 +184,9 @@ export function validateProject(data) {
       if (typeof v === "number" && (!Number.isFinite(v) || Math.abs(v) > 10000)) throw new Error("Invalid stitch setting: " + k);
       if (["spacing", "density", "stitchLength", "size", "width", "borderWidth"].includes(k) && (!Number.isFinite(v) || v <= 0)) throw new Error("Stitch sizes must be positive.");
       if (k === "repeats" && (!Number.isInteger(v) || v < 1 || v > 9)) throw new Error("Use 1–9 running-stitch passes.");
+      if (k === "returnPass" && typeof v !== "boolean") throw new Error("Return pass must be on or off.");
+      if (k === "underlayStyle" && !['full','edge'].includes(v)) throw new Error("Choose full or edge-only fill underlay.");
+      if (k === "curveTolerance" && (!Number.isFinite(v) || (v !== 0 && (v < .05 || v > .5)))) throw new Error("Curve tolerance must be 0 (legacy) or 0.05–0.5 mm.");
       if (k === "text" && (typeof v !== "string" || v.length > 500)) throw new Error("Text is limited to 500 characters.");
     }
   }

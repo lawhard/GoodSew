@@ -3,16 +3,19 @@ import {FONTS} from './fonts.js';
 import {validateProject,defaultParams} from './state.js';
 import {railObject,bakeRails,validateRails} from './satin.js';
 import {satinLettering,SATIN_REPERTOIRE} from './satin-font.js';
+import {DIGITIZING_GUIDE} from './digitizing-guide.js';
+import {reviewDigitizing} from './digitizing-review.js';
 const obj=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
 const str={type:'string'},num={type:'number'},id={type:'integer'};
 const point=obj({x:num,y:num},['x','y']);
 const rails={type:'array',minItems:2,maxItems:2,items:{type:'array',minItems:2,maxItems:2000,items:point}};
 const edit={type:'object',properties:{op:{enum:['add_satin','add_lettering','add_shape','add_running','add_text','update','remove','reorder']},id,ids:{type:'array',items:id},rails,points:{type:'array',minItems:2,maxItems:10000,items:point},kind:str,font:str,name:str,color:str,params:{type:'object'},box:obj({x:num,y:num,w:num,h:num},['x','y','w','h']),rotation:num,visible:{type:'boolean'},text:str,height:num,x:num,y:num,strokeWidth:num,letterSpacing:num},required:['op'],additionalProperties:false};
 export const DESIGN_TOOLS=[
- {name:'get_design',description:'Read the paired browser project, stable object IDs, revision, geometry, and satin capabilities.',inputSchema:obj()},
- {name:'apply_edit',description:'Apply a bounded atomic batch at an expected revision. One undo entry. Coordinates are millimeters. add_satin rails must have matching direction nodes. add_lettering uses Satin Round; read repertoire first. update supports params, rails, box, rotation, color, name and visible; text params use existing outline fonts.',inputSchema:obj({expectedRevision:str,requestId:str,operations:{type:'array',minItems:1,maxItems:100,items:edit}},['expectedRevision','requestId','operations'])},
+ {name:'get_design',description:'Read this first: paired project, stable IDs, revision, geometry, digitizingGuidance from physical sew-outs, object-specific digitizingReview and satin capabilities. Use the guidance when designing.',inputSchema:obj()},
+ {name:'apply_edit',description:'Apply a bounded atomic batch at an expected revision. One undo entry. Coordinates are millimeters. Follow get_design digitizingGuidance. add_satin rails must have matching direction nodes. add_lettering uses Satin Round; read repertoire first. update supports params, rails, points (freehand lines), box, rotation, color, name and visible. Running params include returnPass and curveTolerance; text params use existing outline fonts.',inputSchema:obj({expectedRevision:str,requestId:str,operations:{type:'array',minItems:1,maxItems:100,items:edit}},['expectedRevision','requestId','operations'])},
  {name:'generate_stitches',description:'Compile the actual browser design and return machine limits, measurements and warnings.',inputSchema:obj()},
  {name:'preview_3d',description:'Compile and open the real Thread Lab preview. Returns a PNG from a consistent initial camera and material preset, plus measurements.',inputSchema:obj({focus:obj({x:num,y:num,w:num,h:num},['x','y','w','h']),view:{enum:['top','angled']}})},
+ {name:'preview_pes',description:'Load supplied PES/PEC bytes into the 3D viewer, preserving exact machine stitches and embedded colors. Preview only; the editable project is preserved. Maximum 1 MiB. Returns sewing checks and a PNG. No file paths or network URLs are accepted.',inputSchema:obj({filename:{type:'string',minLength:1,maxLength:120},base64:{type:'string',minLength:4,maxLength:1398104},focus:obj({x:num,y:num,w:num,h:num},['x','y','w','h']),view:{enum:['top','angled']}},['filename','base64'])},
  {name:'inspect_region',description:'Measure sewn spans and needle density in a millimeter rectangle. Density is a geometric estimate.',inputSchema:obj({x:num,y:num,w:num,h:num},['x','y','w','h'])},
  {name:'export_pes',description:'Compile, validate, encode and decode PES in memory. Return a base64 file with coordinate comparison; no machine transfer.',inputSchema:obj()},
  {name:'undo_edit',description:'Undo the most recent project edit at an expected revision.',inputSchema:obj({expectedRevision:str,requestId:str},['expectedRevision','requestId'])}
@@ -33,6 +36,7 @@ export function validateArgs(value,schema,path='arguments'){
  }else if(schema.type==='number'||schema.type==='integer'){
   if(!Number.isFinite(value)||(schema.type==='integer'&&!Number.isInteger(value)))throw Error(`${path}: expected finite ${schema.type}`);
  }else if(schema.type&&typeof value!==schema.type)throw Error(`${path}: expected ${schema.type}`);
+ if(schema.type==='string'&&(value.length<(schema.minLength||0)||value.length>(schema.maxLength||Infinity)))throw Error(`${path}: invalid text length`);
 }
 export function prepareEdits(objects,operations,nextId){
  const result=structuredClone(objects),notes=[];
@@ -57,6 +61,10 @@ export function prepareEdits(objects,operations,nextId){
    else if(op.op==='update'){
     let o=result[index];
     if(op.rails){if(o.kind!=='satin-rails')throw Error('Rail updates require a paired-rail satin object.');o=result[index]=railObject(op.rails,{id:o.id,name:o.name,color:o.color,params:o.params,groupId:o.groupId});}
+    if(op.points){
+     if(!['running','satin'].includes(o.type)||o.kind==='satin-rails'||o.box)throw Error('Point updates require a freehand running or satin line. Use rails or box for other objects.');
+     o.points=structuredClone(op.points);delete o.contours;
+    }
     for(const k of ['name','color','rotation','visible','box'])if(op[k]!==undefined)o[k]=op[k];
     if(op.params)o.params={...o.params,...op.params};
     if(o.kind==='satin-rails')bakeRails(o);
@@ -81,7 +89,7 @@ export function createDesignController(hooks){
    const before=revision();
    if(args.expectedRevision&&args.expectedRevision!==before)throw Error('Revision conflict. Read the design again before editing.');
    let result;
-   if(name==='get_design')result={...hooks.read(),revision:before,capabilities:{units:'mm',satin:'paired rails with matching direction nodes',satinRoundExactCharacters:SATIN_REPERTOIRE,shapes:SHAPES.map(s=>s.kind),outlineFonts:FONTS.map(f=>f.name)}};
+   if(name==='get_design')result={...hooks.read(),revision:before,digitizingGuidance:DIGITIZING_GUIDE,digitizingReview:reviewDigitizing(hooks.objects()),capabilities:{units:'mm',satin:'paired rails with matching direction nodes',satinRoundExactCharacters:SATIN_REPERTOIRE,shapes:SHAPES.map(s=>s.kind),outlineFonts:FONTS.map(f=>f.name)}};
    else if(name==='apply_edit'){
     const candidate=prepareEdits(hooks.objects(),args.operations,hooks.nextId);
     await hooks.prepare(candidate.objects);

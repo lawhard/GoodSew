@@ -1,4 +1,5 @@
 import {generateRailColumn} from './satin.js';
+import {sampleRunningPath} from './running.js';
 // Stitch generators. Each takes an object's geometry + params and returns an
 // array of needle penetration points {x,y} in mm — the raw stitch path for that
 // object, before jumps/trims/color-changes are woven in by the compiler.
@@ -14,7 +15,10 @@ import {
 export function generateRunning(points, params) {
   if (points.length < 2) return [];
   const sl = Math.max(0.5, params.stitchLength || 2.5);
-  let out = resample(points, sl);
+  let out = sampleRunningPath(points, sl, params.curveTolerance || 0);
+  // A whole-path return pass gives two strands without a reversal at every
+  // stitch. Bean stitch below still retraces each segment three/five times.
+  if (params.returnPass) return [...out, ...out.slice(0,-1).reverse()];
   const repeats = Math.max(1, params.repeats || 1);
   if (repeats > 1) {
     const full = [out[0]];
@@ -810,7 +814,7 @@ function fillWithUnderlay(contours, params, opts = {}) {
   if (valid.length === 0) return [];
   const topAngle = params.angle ?? 0;
   const topSpacing = Math.max(0.25, params.spacing ?? 0.4);
-  const light = !!opts.light;
+  const light = !!opts.light || params.underlayStyle === 'edge';
   const occl = opts.occluders || [];
   const subs = [];
 

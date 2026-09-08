@@ -27,7 +27,7 @@ import { optimizeObjects } from "./order.js";
 import { buildSewSheet, FABRICS, fileStem } from "./sewing.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.11.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.12.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -1302,12 +1302,12 @@ function refreshObjectList() {
     li.className = "object-item" + (state.selectedIds.includes(obj.id) ? " selected" : "");
     const icon = document.createElement("span");
     icon.className = "obj-icon"; icon.style.background = obj.color;
-    icon.textContent = obj.type === "text" ? "T" : "◆";
+    icon.textContent = ({text:'T',running:'┄',satin:'〰'})[obj.type] || '◆';
     const main = document.createElement("div"); main.className = "obj-main";
     const label = document.createElement("span"); label.className = "obj-label";
     label.textContent = obj.type === "text" ? (obj.params.text || "Text") : obj.name;
     const sub = document.createElement("span"); sub.className = "obj-sub";
-    sub.textContent = obj.type === "text" ? `Text · ${obj.params.font}` : `Shape · ${obj.name}`;
+    sub.textContent = obj.type === 'text' ? `Text · ${obj.params.font}` : obj.type === 'running' ? (obj.params.returnPass ? 'Double run' : obj.params.repeats >= 3 ? 'Bean stitch' : 'Running stitch') : obj.type === 'satin' ? (obj.kind === 'satin-rails' ? 'Paired-rail satin' : 'Satin line') : 'Filled shape';
     main.append(label, sub);
     const handle = document.createElement("span");
     handle.className = "obj-handle"; handle.textContent = "⠿"; handle.title = "Drag to reorder layer";
@@ -1596,12 +1596,17 @@ function buildRunningProps(host, obj) {
   $("props-title").textContent = "Run stitch";
   row(host, "Stitch length (mm)", numInput(obj.params.stitchLength ?? 2.5, 0.25, 1, (v) => { obj.params.stitchLength = Math.max(1, Math.min(6, v)); markDirty(); commitSoon(); }));
   const sel = document.createElement("select"); sel.className = "select";
-  sel.innerHTML = `<option value="1">Single</option><option value="3">Bean (3-pass)</option><option value="5">Heavy (5-pass)</option>`;
-  sel.value = String(obj.params.repeats || 1);
-  sel.onchange = () => { obj.params.repeats = parseInt(sel.value, 10); markDirty(); commit(); };
+  sel.innerHTML = `<option value="1">Single</option><option value="double">Double run (return pass)</option><option value="3">Bean (3-pass)</option><option value="5">Heavy (5-pass)</option>`;
+  sel.value = obj.params.returnPass ? 'double' : String(obj.params.repeats || 1);
+  sel.onchange = () => { obj.params.returnPass = sel.value === 'double'; obj.params.repeats = obj.params.returnPass ? 1 : parseInt(sel.value, 10); markDirty(); if(state.mode==='stitch')recompile(); commit(); };
   row(host, "Passes", sel);
+  const curve = document.createElement('label'); curve.className='check';
+  const follow = document.createElement('input'); follow.type='checkbox'; follow.checked=!!obj.params.curveTolerance;
+  follow.onchange=()=>{obj.params.curveTolerance=follow.checked ? .15 : 0;markDirty();if(state.mode==='stitch')recompile();commit();host.innerHTML='';buildRunningProps(host,obj);};
+  curve.append(follow,document.createTextNode(' Follow curves more closely'));rowFull(host,'',curve);
+  if(obj.params.curveTolerance)row(host,'Curve tolerance (mm)',numInput(obj.params.curveTolerance,.05,.05,v=>{obj.params.curveTolerance=Math.max(.05,Math.min(.5,v));markDirty();if(state.mode==='stitch')recompile();commitSoon();}));
   const hint = document.createElement("div"); hint.className = "prop-hint";
-  hint.textContent = "Outlines & details. Bean stitch doubles back for a bolder line.";
+  hint.textContent = "Double run retraces the whole line once. Bean reverses at every stitch and can look beaded on tiny fur turns. Lower curve tolerance adds stitches; simplify small wiggles for cleaner fabric results.";
   host.appendChild(hint);
   buildColorRow(host, obj);
 }
@@ -1694,6 +1699,12 @@ function refreshStitchSettings() {
   const under = document.createElement("input"); under.type = "checkbox"; under.checked = p.underlay !== false;
   under.onchange = () => { setAll("underlay", under.checked); recompileLive(); commit(); };
   row(host, "Underlay", under);
+  if(obj.type==='fill'){
+    const support=document.createElement('select');support.className='select';support.setAttribute('aria-label','Fill underlay style');
+    support.innerHTML='<option value="full">Edge + sparse fill</option><option value="edge">Light · edge only</option>';
+    support.value=p.underlayStyle==='edge'?'edge':'full';
+    support.onchange=()=>{setAll('underlayStyle',support.value);recompileLive();commit();};row(host,'Fill support',support);
+  }
 
   const out = document.createElement("input"); out.type = "checkbox"; out.checked = !!p.outline;
   out.onchange = () => { setAll("outline", out.checked); recompileLive(); commit(); };
@@ -1930,7 +1941,7 @@ async function showThreadViewer(plan, title) {
   const stitches=plan.plan.filter(s=>s.cmd==="stitch").length;
   const fits=plan.bounds.w<=100&&plan.bounds.h<=100&&stitches<=100000;
   $("view3d-summary").textContent=`${plan.bounds.w.toFixed(1)} × ${plan.bounds.h.toFixed(1)} mm · ${stitches.toLocaleString()} stitches · ${plan.colors.length} thread blocks · ${fits ? "Within SE700 limits" : "Exceeds SE700 limits"}`;
-  $("view3d-file-notes").textContent=(plan.metadata?.warnings || []).join(" ") || "Geometry follows the stitch plan. Thread surface and fabric response are estimates.";
+  $("view3d-file-notes").textContent=[...(plan.metadata?.warnings || []),...analyzeQuality(plan).warnings.map(w=>w.msg),"Geometry follows the stitch plan. Thread surface and fabric response are estimates."].join(" ");
   modal.classList.remove("hidden");if(!modal.open)modal.showModal();
   $("view3d-stage").textContent="Building thread surfaces…";
   try {
@@ -2181,6 +2192,13 @@ const designCommand=createDesignController({
  apply:objects=>{commit();state.objects=objects;setSel(state.selectedIds.filter(id=>objects.some(o=>o.id===id)));markDirty();commit();refreshObjectList();refreshProps();updateEmptyHint();if(state.mode==='stitch')recompile();needsRender=true;},
  undo,
  generate_stitches:commandCompile,
+ preview_pes:async(args)=>{
+  const {decodePESCommand}=await import('./import/pes-command.js');
+  const plan=decodePESCommand(args),warnings=analyzeQuality(plan);
+  await showThreadViewer(plan,args.filename);
+  const {capture3DView}=await import('./view3d.js');
+  return {filename:args.filename,stats:computeStats(plan),warnings,bounds:plan.bounds,colors:plan.colors,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',physicalSimulation:false},editableProjectChanged:false};
+ },
  preview_3d:async(args)=>{if(args.focus&&(![args.focus.x,args.focus.y,args.focus.w,args.focus.h].every(Number.isFinite)||args.focus.w<=0||args.focus.h<=0||args.focus.w>200||args.focus.h>200))throw Error('Preview region must have positive dimensions up to 200 mm.');const result=await commandCompile();await showThreadViewer(compiled,state.name);const {capture3DView}=await import('./view3d.js');return {...result,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',camera:args.focus?{focus:args.focus,view:args.view||'top'}:'initial fit',physicalSimulation:false}};},
  inspect_region:async({x,y,w,h})=>{
   if(w<=0||h<=0||w>200||h>200)throw Error('Use a positive inspection rectangle up to 200 mm.');
@@ -2190,7 +2208,7 @@ const designCommand=createDesignController({
   return {region:{x,y,w,h},intersectingSegmentBounds:selected.length,needlePoints:needles,needlePointsPerSquareMM:needles/(w*h),note:'Bounding-box span intersection and needle density estimates; not a fabric coverage simulation.'};
  },
  export_pes:async()=>{
-  const result=await commandCompile(),bytes=exportPES(compiled),{parsePES}=await import('./import/pes.js'),decoded=parsePES(bytes,'verification.pes');
+  const result=await commandCompile(),bytes=exportPES(compiled,fileStem(state.name)),{parsePES}=await import('./import/pes.js'),decoded=parsePES(bytes,'verification.pes');
   const a=compiled.plan.filter(s=>s.cmd==='stitch'),b=decoded.plan.filter(s=>s.cmd==='stitch');
   if(a.length!==b.length)throw Error('PES verification failed: stitch count mismatch.');
   const dx=b[0].x-a[0].x,dy=b[0].y-a[0].y;

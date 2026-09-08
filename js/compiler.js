@@ -11,6 +11,7 @@
 import { colorBlocks, state } from "./state.js";
 import { generateForObject } from "./stitches.js";
 import { dist, sub, norm, add, scale, bbox } from "./geometry.js";
+import {reviewDigitizing} from './digitizing-review.js';
 
 // Overlap knockout: the regions of FILL objects stacked ABOVE `obj` in the
 // layer order (later in state.objects = drawn on top = covers the fabric).
@@ -147,7 +148,7 @@ export function compile(objects = state.objects) {
   const stitchPts = clean.filter((s) => s.cmd === "stitch");
   const bounds = stitchPts.length ? bbox(stitchPts) : { minX: 0, minY: 0, maxX: 0, maxY: 0, w: 0, h: 0 };
 
-  return { plan: clean, colors, bounds };
+  return { plan: clean, colors, bounds, digitizingReview: reviewDigitizing(objects) };
 }
 
 // Short-stitch removal with corner preservation: within a continuous run of
