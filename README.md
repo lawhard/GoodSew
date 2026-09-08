@@ -1,280 +1,120 @@
-# GoodSew — Brother SE700 Embroidery Digitizer
+# Good Sew Studio 0.11.0
 
-A fully in-browser embroidery designer built **exclusively for the Brother
-SE700**. It works in two simple phases: **① Design** — lay out text and shapes
-as solid, WYSIWYG artwork and arrange them like you would in Word or an image
-markup tool; then **② Render** — one button turns your layout into real machine
-stitches that you can fine-tune, watch sew out in a simulator, and export as a
-`.pes` file the machine reads. All client-side, no build step, no server.
+A browser-based embroidery design workspace for the **Brother SE700**. This revision repairs GoodSew 0.8.1 while preserving its local-first, static-site architecture, font library, digitizing tools, simulation, product previews, and 3D view.
 
-The whole app is tied to the SE700's real capabilities: a **4" × 4"
-(100 × 100 mm)** embroidery field and a **710 spm** maximum speed (used in the
-run-time estimate). Designs that exceed the field are flagged before export.
+The request mentioned “SC700.” The supplied app already targets SE700, and Brother's official SE700 manual confirms the profile used here. The physical model has not been confirmed by the owner. Do not assume compatibility with another model.
 
-![tool: vanilla JS + Canvas](https://img.shields.io/badge/stack-vanilla%20JS%20%2B%20Canvas-blue)
+## Use the app
 
-## Quick start
+1. Give your project a name. Add text, shapes, running or satin lines, or import a clean logo.
+2. Choose a fabric. **Apply starting settings** updates selected objects, or all objects when none are selected. These are starting values for a test sew, not a guarantee of fabric performance.
+3. **Fit to hoop** regenerates actual stitches and centers the design with a 2 mm margin. **Add basting** adds a removable running-stitch frame first when there is room.
+4. **Generate stitches**. Inspect holes and travel moves, play the sewing sequence, and review the quality messages. Click a spool-order entry to move the simulator to that thread block.
+5. Download **PES** and the **sewing sheet**. Save a `.gsew` project backup to retain editable objects.
 
-It's a static site — no install, no build. Serve the folder and open it:
+Projects autosave in the current browser and origin. Private deployment, localhost, and an older goodsew.win installation have separate browser storage: download a project from the old origin and Open it on the new one. Browser storage is not a cloud backup.
 
-```bash
-# any static server works
-python3 -m http.server 8000
-# then open http://localhost:8000
+## Precise control and paired-rail satin
+
+**Assistant control** opens a visible command panel and can enable the local MCP connection for this tab. Both use the same validated design commands. Changes use object IDs and a project revision, are compiled before application, and enter normal Undo history. Duplicate edit requests are recognized by request ID. The app rejects crossed rails and overlong satin throws before committing connector edits.
+
+Start with `npm run dev` (Node.js). In Codex, register the local stdio adapter once:
+
+```sh
+codex mcp add good-sew -- node /absolute/path/to/good-sew/mcp/server.mjs
 ```
 
-(Opening `index.html` directly also works in most browsers, though a server is
-recommended so ES modules load cleanly.)
+Then open **Assistant control → Enable local MCP** in the intended tab. Disconnect revokes the connection; reloading requires enabling it again. The server binds to 127.0.0.1, checks origin/host and credentials, and serves only public app files. Its generated `.local/connector.json` stays private and is excluded from Git, packages and static hosting. See [design-automation.md](docs/design-automation.md) for commands and examples. The connector is local; a static hosted copy still has browser commands but has no remote MCP backend.
 
-## Features
+Select existing text and choose **Use Satin Round lettering** to replace the outline-font approximation with original, authored stroke lettering. The result is editable paired-rail satin columns with shared direction nodes, curved stitch direction, short-stitch handling, center underlay, and full-cycle density. Sharp joins are split to prevent rail inversion. Undo restores the original font. Move, resize and rotate columns normally; edit their exact world-coordinate rails through Assistant control.
 
-### ① Design phase — lay it out
-Objects are shown as **solid vector art** (not stitches), so you can see exactly
-what you're making. Select / move with the mouse, drag the **8 resize handles**
-to scale (hold **Shift** for even/locked aspect), and use the **rotate knob** to
-spin. Everything is meant to feel like Word or an image markup tool.
+Satin Round currently has all capitals and digits, plus exact lowercase `o c d e s w l i n u`, hyphen and period. Other ASCII lowercase letters use capital forms and report the substitution; unsupported characters are rejected. This is an early geometric alphabet, not a professionally test-sewn font library. Overlapping joins and small sizes need inspection and a physical stitch-out. Generic outline-font automatic digitization remains heuristic.
 
-- **Text** — click to drop, then just type. **Double-click** any text to edit it
-  in place. A prominent **Font Library** shows **36 embroidery-friendly fonts**
-  rendered live with your own words so you can pick visually. They're **grouped
-  into categories** — Block, Sans-serif, Serif, Slab serif, Cursive,
-  Handwritten and Display — each heading set in a font representative of that
-  group, with quick filter chips (also drawn in their own styles) to jump
-  between them. Make text **bold / italic / underlined**, bend it into an **arc
-  or full circle**, set its size and rotation, and recolor it — all from a clean
-  properties panel.
-- **Shapes** — a visual picker organized into **Basics, Stars & Symbols, and
-  Fun** categories: 23 shapes from rectangles and stars to arrows, lightning,
-  shields, clouds, flowers, gears and speech bubbles, each with a labelled
-  thumbnail. Pick one, drag to place (Shift for an even shape), then
-  resize/rotate like anything else. Filled or outline-only.
-- **Background image tracing** — import any image and lay artwork over it.
-- **Logo import (SVG, PNG, JPG…)** — upload a logo and it's **auto-converted to
-  stitchable vector art** (the **Logo** button).
-  - **Raster logos (PNG/JPG/WebP/GIF)** are vectorized intelligently: the
-    background is detected and dropped (transparency, or the classic white
-    card), colors are **quantized to a stitchable palette** (≤6 threads, exact
-    brand colors recovered from clean interiors), speckle and anti-aliasing
-    halos are cleaned, and each color region is traced into smooth contours —
-    **holes included** — sized to the hoop.
-  - **SVG logos** are flattened through each element's transform matrix, with
-    colors resolved the way a browser renders them (inherited `<g>` fills,
-    `<style>` classes, gradients → nearest solid), invisible helpers skipped,
-    and full-canvas white background rects dropped. `fill:none` strokes become
-    satin-border outlines.
-  - All pieces arrive **grouped** and all-selected. Click a single part on the
-    canvas (or in the Objects panel) to recolor or re-pattern just that layer;
-    Shift-click a range, or use **Select all**. With the whole logo selected, a
-    **Logo colors** submenu recolors each thread it uses. Imported art moves,
-    resizes, rotates and stitches like anything else.
-- **Thread-pattern picker** — per object, choose the texture from labelled
-  preview thumbnails: **Auto** (satin for narrow, fill for wide), **Satin**,
-  **Tatami**, or **Cross-hatch** (a perpendicular two-pass grid).
-- **Real thread colors** — pick from the full **New brothread 150-color palette**
-  (plus the one extra 40-spool color, so every spool you own is selectable) in a
-  searchable swatch picker, grouped by assortment (**Brother**, **Janome “N”**,
-  and **Variegated**). Filter to **just the 40-spool kit**, or search by code or
-  name (`405`, `Teal`, `N233`). The same picker is used for the active color, each
-  object's color, and per-thread logo recoloring. On-screen RGB are sourced from
-  the maker's own color cards (via the Ink/Stitch New Brothread palettes) and
-  Brother thread values. DST export keeps your exact color; PES still snaps to
-  the nearest Brother-64 index for the machine's on-screen color name.
+## Legacy smooth satin lettering
 
-### ② Render phase — stitch it
-Hit **⚡ Render Stitches** and the layout compiles into a real stitch plan with a
-sensible, good-looking **default tatami fill** — no tuning required. From there
-you can fine-tune each object's **density, stitch length, fill angle, underlay**
-and an optional **outline pass**, then simulate and export.
+Select a text or fill object, Generate stitches, then choose **Smooth satin lettering** in Stitch Settings. This opt-in preset replaces ladder edge steps with continuous alternating rail stitches, retains horizontal satin sections at connected terminals, and resamples the center underlay at 2 mm. Existing projects retain their previous construction until the option is enabled. Undo restores the previous settings.
 
-- **Section-based digitizing** — like a commercial digitizer, every region is
-  first **decomposed into sections** (branch analysis): stems, bars, arcs and
-  blobs are detected where the shape splits or merges. Each section then gets
-  the stitch style that suits it:
-  - narrow ribbons (letter stems, the walls of an "O", ≤ ~6 mm — adjustable)
-    become **satin** with rungs *across* the stroke and a center-run underlay;
-  - thin **horizontal** strokes (a T's bar, an e's crossbar) get satin with
-    **vertical** rungs — the rung direction follows the stroke, so lettering
-    looks like real embroidery;
-  - wide areas become **tatami fill** (brick-offset serpentine);
-  - **forcing Satin** on a wide shape produces a true glossy diagonal
-    **zig-zag** (unmistakably satin — never fill-like rows).
-- **Boundary-aware travel** — moving between sections never stitches straight
-  across finished fill: short hops connect directly, longer ones **run along
-  the region's edge**, and anything further gets a proper tie-off + trim.
-  Concave regions (a heart's notch) fill cleanly with no jump across the fold.
-- **Hole-aware everywhere** — stitches never travel across letter counters
-  (the insides of **O, U, e, a, B, 8**…); the edge underlay traces only outer
-  contours, never counters. A small **pull-compensation inset** keeps thread
-  inside the outline so it doesn't bleed over edges or pinch thin apertures
-  shut. Lettering gets a lighter underlay so small text stays crisp. Shapes
-  set to **Outline** get a **satin border** band around the contour instead
-  of a filled interior.
+The preset uses automatic satin/fill selection, 0.4 mm full-cycle spacing (two crossing stitches per cycle), center underlay, and 0.1 mm boundary inset. It does not alter the preview's thread thickness. Decreasing spacing increases coverage and stitch count; wide regions still use tatami. The separate manually drawn Satin line tool retains its original per-leg spacing semantics.
 
-### More
-- **3D Stitch View** — one click after rendering opens a full three.js render:
-  every stitch is a physical thread over woven fabric in the hoop, with studio
-  lighting, shadows and thread sheen. Orbit/zoom/pan freely, and **play back
-  the sew order** in 3D (slider + speed control) to see exactly how the design
-  is stitched. three.js loads lazily so the app stays light.
-- **Manual digitizing (Draw tools)** — simple by default, powerful underneath:
-  **Satin** draws a true satin column along a line you click (width, density,
-  pull comp, underlay in Properties), **Run** draws a running-stitch path
-  (length + bean/heavy passes), **Region** draws a freehand filled shape with
-  all the standard stitch settings. Double-click or Enter finishes, Esc cancels.
-- **Smart alignment guides** — while dragging, objects snap to other objects'
-  edges and centers (magenta guides) and the hoop centerlines (blue), exactly
-  like Illustrator. Hold Alt to move freely.
-- **Hoop visualization** — the physical SE700 4×4" hoop (frame, screw, fabric)
-  drawn around the sewing field; toggle it in the View panel.
-- **Autosave** — the design continuously saves to your browser and comes back
-  when you reopen the page; closing the tab can't lose work. **Save/Open**
-  still writes/reads `.gsew` files for backups and sharing, and **Reset**
-  restores the sample heart + GoodSew design.
-- **Overlap knockout** — where objects stack, the hidden fill underneath is
-  removed automatically (with a small tuck-under margin so no fabric gap shows),
-  so layered designs sew flat instead of double-stitching. Text and outline
-  passes still stitch on top of fill, standard embroidery practice.
-- **Light & dark themes** — light is the default; toggle any time (◐ in the top bar).
-- **Undo / redo** — Ctrl/Cmd+Z and Ctrl+Y (or Ctrl/Cmd+Shift+Z), plus toolbar buttons.
-- **Layout tools** — multi-select (Shift+click), copy / cut / paste / duplicate
-  (Ctrl C/X/V/D), select-all (Ctrl+A), group / ungroup, and align / distribute
-  (left/center/right, top/middle/bottom, spread H/V) from the multi-select panel.
-- **Layers** — drag objects up/down in the Objects panel to set draw / stitch order.
-- **Snap-to-center & nudging** — while you drag an object, its center
-  **magnetically snaps** to the hoop's center line (a highlighted blue guide)
-  so getting things centered is effortless; hold **Alt** to move freely. Once
-  placed, **arrow keys** fine-tune the selection by 0.5 mm (hold **Shift** for
-  5 mm, **Alt** for a precise 0.1 mm), and **C** (or the **Center / Center H /
-  Center V** buttons in Properties) snaps it to the hoop center.
-- **Pan & zoom** — smooth, gentle **scroll-to-zoom** (proportional, so it
-  won't jump on a trackpad) toward the cursor; **two-finger scroll** (or
-  **Shift + wheel**) pans; or drag any empty part of the plate to pan (also
-  Space-drag / middle-drag).
-- **Product preview** — see the design composited at *true physical scale* onto
-  a t-shirt, **pocket tee** (design on the pocket), **crew socks**, **tote
-  bag**, sneaker, bath towel, bath mat, or a custom rectangle. **Every product
-  has adjustable real dimensions** (chest width, foot length, bag size…), so
-  you can dial in the exact garment you're stitching and judge size honestly.
-- **Rulers, cursor coordinates & guides** — mm rulers on both axes that track
-  zoom/pan, a live cursor position marker, and draggable guide lines: pull a
-  vertical guide from the top ruler or a horizontal guide from the left ruler;
-  drag a guide back onto a ruler (or double-click it) to remove it.
-- Select / move / reshape objects, per-object visibility, and a layer list that
-  defines stitch order.
+This is an incremental improvement, not full automatic satin digitization: scanline-derived rails still need better corner direction, variable-width editing, and pre-digitized lettering for consistently polished results. See [the integration design](docs/design-automation.md) for the implemented precise editing and verification interface.
 
-### Quality check & optimization
-After rendering, a **Quality Check** panel flags issues before you sew —
-field overflow, very short stitches (thread-break risk), over-long stitches,
-high jump/trim counts, and overlapping (double-stitched) objects. The compiler
-also runs **short-stitch removal** (drops redundant near-collinear
-micro-stitches while preserving corners) so output is clean by default, and
-**Optimize order** reorders objects to group same colors (fewer thread changes)
-and shorten travel between them.
+## Thread Lab: PES in 3D
 
-### Machine-accurate simulation
-The design compiles to an ordered **stitch plan** that models exactly what the
-machine does. The simulator plays it back so you can verify before you stitch:
-- **Stitch order** — watch every penetration in sequence; scrub anywhere.
-- **Thread changes** — colour blocks are detected from object order; the readout
-  names the active Brother thread.
-- **Jump stitches** — long travel moves rendered as dashed blue lines.
-- **Trims** — thread cuts between disjoint sub-paths and colour changes, marked
-  in red.
-- **Needle path** — the live needle head with crosshair tracks the current move.
-- **Estimated stitch count & run time** — live statistics including dimensions,
-  jump/trim counts, and a run-time estimate that accounts for sewing speed,
-  colour-change pauses and trim cycles.
+Click **Preview PES** to open a `.pes` or `.pec` file directly, or **Generate stitches → 3D View** for your current design. Imported stitch files do not replace your editable project.
 
-### Tie-offs
-Every fresh thread run starts with a tie-in lock stitch and every trim / color
-change / design end is preceded by a tie-off, so the stitching is secured and
-won't unravel on the machine.
+- Actual needle coordinates and sewing order drive the model; jumps remain separate from sewn thread.
+- Curved strands have procedural ply and microfiber texture, adjustable diameter in millimeters and loft, plus polyester, rayon, and cotton appearance presets.
+- Woven fabric, directional lighting, exposure, estimated overlap height, macro detail, needle points, and travel paths are adjustable.
+- Orbit by dragging, pan with Shift-drag, zoom with the wheel or pinch. Arrow keys orbit, +/− zoom, Home resets. Click a strand to inspect its stitch length.
+- Play the sewing sequence, scrub by stitch, or jump to a thread block. Preview colors are editable without changing the source file. **Save image** prepares a PNG through browser downloads.
 
-### Export — PES & DST
-Two formats: **Brother PES v1** (the SE700's native format) and **Tajima DST**
-(the universal format read by virtually every machine and digitizer). Both are
-verified by reading the written file back with **pyembroidery**.
+The reader supports standard PES/PEC stitch streams and common PES v5–v10 custom thread metadata; unsupported metadata falls back to the PEC palette with a warning. It rejects malformed or oversized inputs (16 MB, 200,000 stitches, 600,000 commands, or 2,000 mm dimensions). Large files and macro detail require more GPU memory. It does not recover editable shapes from stitches.
 
-#### PES export
-Exports a **Brother PES v1** file with an embedded **PEC** block — the format the
-SE700 reads off USB. The writer is byte-accurate to the pyembroidery
-specification:
-- 0.1 mm units, Y-down coordinate space, design auto-centred.
-- Correct short/long-form delta encoding (long form is big-endian), with jump and
-  trim flag bits.
-- `FE B0` colour-change markers and Brother 64-colour palette matching
-  (compuphase nearest-colour).
-- 48×38 1-bpp PEC thumbnails (composite + per colour).
-- Long moves split to respect the ±2047-unit limit.
+This is a detailed visual estimate, not a calibrated physical simulation. PES supplies needle positions and color information, not actual thread diameter, tension, fabric stretch, or compression. Diameter defaults to an assumed 0.24 mm; material finishes and overlap height are approximations. A physical test sew remains necessary.
 
-Colours snap to the nearest of the 64 standard Brother embroidery threads, and the
-export warns if the design exceeds the selected hoop field.
+## Machine profile and transfer
 
-### Embroidery field
-- 4" × 4" (100 × 100 mm) — the Brother SE700's single embroidery hoop and
-  maximum machine area. The canvas, export bounds check and rulers are all keyed
-  to this field.
+The [Brother SE700 operation manual](https://download.brother.com/welcome/doch102582/888p10_om01en.pdf), specifications on printed page 96, gives:
 
-## Project files (`.gsew`)
-Save/Open stores your editable vector design as JSON so you can keep refining it.
-The PES file is the final, flattened machine output.
+- Maximum embroidery field: 100 × 100 mm.
+- Maximum embroidery speed: 400 stitches/minute. The 710 figure is sewing speed.
+- Maximum 100,000 stitches per embroidery pattern.
+- PES and DST are among the supported embroidery formats.
 
-## Architecture
+Good Sew exports centered PES v1/PEC files, or DST. Both exporters block empty/invalid data, excessive stitch counts, and designs exceeding the actual 100 mm field after 0.1 mm rounding, including travel. A 256-block limit is the PEC encoding limit, not a claimed machine specification.
 
-```
-index.html            UI shell
-css/styles.css         studio theme
-js/
-  app.js               controller: tools, interaction, panels, export wiring
-  state.js             design data model + serialization
-  geometry.js          vector math (resample, scanline, rotate, hit-test)
-  stitches.js          hole-aware tatami-fill (+ underlay) & text generators
-  shapes.js            shape preset outline polygons
-  fonts.js             font catalog + text → glyph contours (bold/italic/arc)
-  compiler.js          objects → ordered stitch plan (order, jumps, trims, colors)
-  stats.js             stitch/jump/trim counts + run-time estimate (710 spm)
-  threads.js           Brother 64-colour palette + nearest-colour matching
-  hoop.js              SE700 capabilities (100×100 mm field, 710 spm)
-  render.js            Canvas: light/dark themes, design solids + handles, stitches
-  simulator.js         stitch-out playback engine
-  export/pes.js        byte-accurate PES v1 + PEC writer
-vendor/opentype.min.js     opentype.js (MIT) — glyph outline parsing
-fonts/*.ttf                bundled OFL fonts (see fonts/NOTICE.md)
-docs/pes-format-notes.md   the format spec the writer follows
-test/*.test.mjs, test/ui.e2e.mjs   automated tests
+Copy PES to a compatible USB flash drive and recall the pattern on the machine. Wireless transfer uses Brother Design Database Transfer on a compatible Windows PC; the browser does not send files directly to the machine. PES maps colors to Brother's palette. The sewing sheet lists nearest New brothread spools in sewing order; spool matches are approximate. DST carries no thread colors.
+
+The time estimate assumes 350 effective stitches/minute and one minute per spool change. Thread cuts and handling add time. Trim commands may not produce automatic jump-thread cuts on the SE700. Inspect and manually cut travel threads as needed.
+
+## Repairs and additions
+
+- Corrected the shared arc-length resampling routine: fine curve segments now accumulate into regular needle points, rather than dropping intermediate points and sewing an endpoint chord. This repairs curved underlay and running paths throughout the digitizer.
+
+- Running and satin objects retain their types through Save/Open and autosave; holes and grouping survive round trips.
+- An empty saved document stays empty. Undo preserves grouping, captures pending edits, and restores the document after New/Open.
+- Malformed projects are rejected before changing the current document; finite geometry, supported types, and bounded data are validated.
+- Color changes travel to the new object before any new-color penetration. Tie stitches cannot overshoot their reference segment; short-stitch cleanup preserves reversals.
+- Bean stitch reinforces each segment instead of simply retracing the entire outline.
+- Order optimization preserves all potentially overlapping pairs and never increases color changes.
+- SVG subpaths are split explicitly, including relative movetos, keeping nearby holes separate. Definitions are excluded. Imported SVG is sanitized before attachment and its CSS isolated from the app. Open strokes remain open running paths.
+- SVGs containing text, reusable references, embedded images, masks, clips, or filters are rejected with guidance to flatten them or import a PNG, rather than silently losing artwork. Gradients are approximated as solid thread colors; full SVG rendering fidelity is not claimed.
+- Raster import exposes a color-count limit and optional background removal; small-image corner sampling is corrected.
+- Stitch settings show the correct controls for running and satin objects. Font load failures no longer silently produce incomplete exports.
+- Named projects, visible browser-save status, fabric starting settings, stitch-aware hoop fitting, basting, spool-order navigation, printable sewing sheets, explicit zoom/fit controls, keyboard focus indicators, a quick guide, and a responsive workspace.
+- Automated checks flag short stitches, crowded areas, edge proximity, and jump-thread handling. They are heuristics, not a physical sew-out certification.
+
+## Development
+
+Node.js 22+ is used for the app and local connector. Python 3 is optional for independent machine-file verification. The deployed app has no backend or runtime npm dependencies.
+
+```sh
+npm ci
+npm test
+npm run test:connector
+npm run build
+npm run dev
 ```
 
-## Tests
+Open `http://127.0.0.1:8137/`. Production static assets are in `dist/`; build output excludes source tests and development dependencies. The GitHub Pages workflow tests and builds before publishing only `dist/`.
 
-```bash
-node test/pipeline.test.mjs   # compile → stats → PES, decode PEC round-trip
-node test/text.test.mjs       # font → glyph contours (with holes) → fill stitches
-node test/fill.test.mjs       # hole-aware fill: zero stitches cross letter counters
-node test/ui.e2e.mjs          # real-browser: design tools, handles, render, export
-node test/workflow.e2e.mjs    # real-browser: full design→render→simulate→export
-node test/gen_pes.mjs && python3 test/verify_pes.py   # PES machine-format check
-node test/gen_dst.mjs && python3 test/verify_dst.py   # DST machine-format check
+`npm test` runs the existing geometry suites, new persistence/export/ordering regressions, SVG DOM tests using an independent geometry library, and a DOM control smoke test. The DOM harness stubs canvas drawing: it verifies control/state behavior, not browser rendering. Older browser `.smoke.mjs` and `.e2e.mjs` scripts from 0.8.1 remain as legacy references and contain environment-specific paths; they are not part of `npm test`.
+
+Independent machine-file decoding:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install pyembroidery==1.5.1
+node test/gen_pes.mjs
+node test/gen_dst.mjs
+.venv/bin/python test/verify_pes.py
+.venv/bin/python test/verify_dst.py
 ```
 
-- **pipeline** — compiles a multi-colour design, checks the stitch plan and
-  statistics, exports a PES file, and decodes the PEC stitch stream back to
-  confirm the bounding box round-trips (validates the delta encoder).
-- **text** — loads a font, converts text to glyph contours (verifying letter
-  counters become holes), and fills it to stitches.
-- **fill** — generates fills for holed glyphs (O, U, e, a, B, 8, "good") across
-  fonts and asserts that **zero** stitch segments ever cross a counter — the
-  regression guard for the hole-aware fill.
-- **e2e / workflow** — drive the app in headless Chrome through the two-phase UI:
-  design tools, select/move/resize/rotate handles, the font library, the Render
-  step, the simulator, preview and PES export — all with no console errors.
-  Require a local static server on :8137 and `puppeteer-core`
-  (`npm i puppeteer-core`).
-- **verify_pes** — the most important check: reads an exported PES back with
-  **pyembroidery** (an independent library that mirrors how the machine parses
-  the file) and confirms every stitch position, the bounding box, the colors and
-  the command structure (stitch / jump / trim / color-change / end) match the
-  source plan exactly. Requires `pip install pyembroidery`.
+## Verification and limits
 
-## Disclaimer
-Always preview a new design on stabilizer/scrap before stitching on your final
-material. Run-time figures are estimates.
+See [validation.md](docs/validation.md) for the recorded checks. No physical SE700 was connected. Thread Lab was exercised in the real in-app browser with generated stitches and independent PES fixtures, including custom colors, playback, macro detail, diameter, and lighting. The SVG tests use an independent geometry implementation in a DOM harness, so native SVG transformation behavior still needs browser verification. Product previews and physical fabric/thread behavior remain approximations.
+
+This is a substantially repaired browser digitizer, not a replacement for a mature professional digitizing suite. Fonts are converted from outlines rather than pre-digitized embroidery alphabets. Tiny lettering, difficult fabrics, layered textures, gradient/photos, and intricate satin corners need inspection and a physical test on matching scrap before use on a finished garment.
+
+Original font notices remain in `fonts/NOTICE.md`.

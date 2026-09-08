@@ -1,0 +1,96 @@
+import {SHAPES} from './shapes.js';
+import {FONTS} from './fonts.js';
+import {validateProject,defaultParams} from './state.js';
+import {railObject,bakeRails,validateRails} from './satin.js';
+import {satinLettering,SATIN_REPERTOIRE} from './satin-font.js';
+const obj=(properties={},required=[])=>({type:'object',properties,required,additionalProperties:false});
+const str={type:'string'},num={type:'number'},id={type:'integer'};
+const point=obj({x:num,y:num},['x','y']);
+const rails={type:'array',minItems:2,maxItems:2,items:{type:'array',minItems:2,maxItems:2000,items:point}};
+const edit={type:'object',properties:{op:{enum:['add_satin','add_lettering','add_shape','add_running','add_text','update','remove','reorder']},id,ids:{type:'array',items:id},rails,points:{type:'array',minItems:2,maxItems:10000,items:point},kind:str,font:str,name:str,color:str,params:{type:'object'},box:obj({x:num,y:num,w:num,h:num},['x','y','w','h']),rotation:num,visible:{type:'boolean'},text:str,height:num,x:num,y:num,strokeWidth:num,letterSpacing:num},required:['op'],additionalProperties:false};
+export const DESIGN_TOOLS=[
+ {name:'get_design',description:'Read the paired browser project, stable object IDs, revision, geometry, and satin capabilities.',inputSchema:obj()},
+ {name:'apply_edit',description:'Apply a bounded atomic batch at an expected revision. One undo entry. Coordinates are millimeters. add_satin rails must have matching direction nodes. add_lettering uses Satin Round; read repertoire first. update supports params, rails, box, rotation, color, name and visible; text params use existing outline fonts.',inputSchema:obj({expectedRevision:str,requestId:str,operations:{type:'array',minItems:1,maxItems:100,items:edit}},['expectedRevision','requestId','operations'])},
+ {name:'generate_stitches',description:'Compile the actual browser design and return machine limits, measurements and warnings.',inputSchema:obj()},
+ {name:'preview_3d',description:'Compile and open the real Thread Lab preview. Returns a PNG from a consistent initial camera and material preset, plus measurements.',inputSchema:obj({focus:obj({x:num,y:num,w:num,h:num},['x','y','w','h']),view:{enum:['top','angled']}})},
+ {name:'inspect_region',description:'Measure sewn spans and needle density in a millimeter rectangle. Density is a geometric estimate.',inputSchema:obj({x:num,y:num,w:num,h:num},['x','y','w','h'])},
+ {name:'export_pes',description:'Compile, validate, encode and decode PES in memory. Return a base64 file with coordinate comparison; no machine transfer.',inputSchema:obj()},
+ {name:'undo_edit',description:'Undo the most recent project edit at an expected revision.',inputSchema:obj({expectedRevision:str,requestId:str},['expectedRevision','requestId'])}
+].map(t=>({...t,annotations:{readOnlyHint:!['apply_edit','undo_edit'].includes(t.name),destructiveHint:false,openWorldHint:false}}));
+export function validateArgs(value,schema,path='arguments'){
+ if(schema.enum&&!schema.enum.includes(value))throw Error(`${path}: unsupported value`);
+ if(schema.type==='object'){
+  if(!value||typeof value!=='object'||Array.isArray(value))throw Error(`${path}: expected an object`);
+  for(const k of schema.required||[])if(!(k in value))throw Error(`${path}: missing ${k}`);
+  for(const [k,v] of Object.entries(value)){
+   if(['__proto__','constructor','prototype'].includes(k))throw Error('Forbidden property');
+   if(schema.additionalProperties===false&&!schema.properties?.[k])throw Error(`${path}: unknown field ${k}`);
+   if(schema.properties?.[k])validateArgs(v,schema.properties[k],path+'.'+k);
+  }
+ }else if(schema.type==='array'){
+  if(!Array.isArray(value)||value.length<(schema.minItems||0)||value.length>(schema.maxItems||10000))throw Error(`${path}: invalid list length`);
+  value.forEach(v=>validateArgs(v,schema.items,path+'[]'));
+ }else if(schema.type==='number'||schema.type==='integer'){
+  if(!Number.isFinite(value)||(schema.type==='integer'&&!Number.isInteger(value)))throw Error(`${path}: expected finite ${schema.type}`);
+ }else if(schema.type&&typeof value!==schema.type)throw Error(`${path}: expected ${schema.type}`);
+}
+export function prepareEdits(objects,operations,nextId){
+ const result=structuredClone(objects),notes=[];
+ for(const op of operations){
+  if(op.op==='add_satin')result.push(railObject(op.rails,{id:nextId(),name:op.name,color:op.color,params:op.params}));
+  else if(op.op==='add_lettering'){
+   const r=satinLettering({...op,id:nextId,groupId:'satin-'+nextId()});result.push(...r.objects);
+   if(r.substitutions.length)notes.push('Capital forms substituted for: '+r.substitutions.join(', '));
+  }else if(['add_shape','add_running','add_text'].includes(op.op)){
+   const type={add_shape:'fill',add_running:'running',add_text:'text'}[op.op];
+   if(type==='fill'&&(!op.box||!SHAPES.some(s=>s.kind===op.kind)))throw Error('Choose a supported shape kind and a millimeter box.');
+   if(type==='running'&&!op.points)throw Error('Running stitch needs points.');
+   if(type==='text'&&(!op.text||!FONTS.some(f=>f.name===(op.font||'Anton'))))throw Error('Text needs a supported outline font and nonempty text.');
+   result.push({id:nextId(),type,kind:op.kind,name:op.name||op.text||op.kind||'Running line',color:op.color||'#0e1f7c',visible:true,rotation:op.rotation||0,box:op.box,
+    points:type==='text'?[{x:op.x??10,y:op.y??50}]:op.points||[],params:{...defaultParams(type),...op.params,...(type==='text'?{text:op.text,font:op.font||'Anton',size:op.height||12}:{})}});
+  }else if(op.op==='reorder'){
+   if(!Array.isArray(op.ids)||op.ids.length!==result.length||new Set(op.ids).size!==result.length||op.ids.some(id=>!result.some(o=>o.id===id)))throw Error('Reorder must include every object ID once.');
+   result.sort((a,b)=>op.ids.indexOf(a.id)-op.ids.indexOf(b.id));
+  }else{
+   const index=result.findIndex(o=>o.id===op.id);if(index<0)throw Error('Object ID not found: '+op.id);
+   if(op.op==='remove')result.splice(index,1);
+   else if(op.op==='update'){
+    let o=result[index];
+    if(op.rails){if(o.kind!=='satin-rails')throw Error('Rail updates require a paired-rail satin object.');o=result[index]=railObject(op.rails,{id:o.id,name:o.name,color:o.color,params:o.params,groupId:o.groupId});}
+    for(const k of ['name','color','rotation','visible','box'])if(op[k]!==undefined)o[k]=op[k];
+    if(op.params)o.params={...o.params,...op.params};
+    if(o.kind==='satin-rails')bakeRails(o);
+   }
+  }
+ }
+ validateProject({version:4,objects:result.map(o=>({...o,base:o._base}))});
+ for(const o of result)if(o.kind==='satin-rails'){validateRails(o._rails);}
+ return {objects:result,notes};
+}
+export function createDesignController(hooks){
+ let seq=0,last='',busy=false;const session=globalThis.crypto.randomUUID(),cache=new Map();
+ const revision=()=>{const text=hooks.fingerprint();if(text!==last){last=text;seq++;}return session+':'+seq;};
+ return async(name,args={})=>{
+  const spec=DESIGN_TOOLS.find(t=>t.name===name);if(!spec)throw Error('Unsupported Good Sew command.');
+  validateArgs(args,spec.inputSchema);
+  const key=args.requestId,signature=JSON.stringify({name,args});
+  if(key&&cache.has(key)){const old=cache.get(key);if(old.signature!==signature)throw Error('requestId was already used for different arguments.');return old.result;}
+  if(busy)throw Error('Another design command is running. Retry after it completes.');
+  busy=true;
+  try{
+   const before=revision();
+   if(args.expectedRevision&&args.expectedRevision!==before)throw Error('Revision conflict. Read the design again before editing.');
+   let result;
+   if(name==='get_design')result={...hooks.read(),revision:before,capabilities:{units:'mm',satin:'paired rails with matching direction nodes',satinRoundExactCharacters:SATIN_REPERTOIRE,shapes:SHAPES.map(s=>s.kind),outlineFonts:FONTS.map(f=>f.name)}};
+   else if(name==='apply_edit'){
+    const candidate=prepareEdits(hooks.objects(),args.operations,hooks.nextId);
+    await hooks.prepare(candidate.objects);
+    if(revision()!==before)throw Error('Design changed while preparing the edit. Read it again.');
+    hooks.apply(candidate.objects);result={revision:revision(),notes:candidate.notes,objectIds:candidate.objects.map(o=>o.id)};
+   }else if(name==='undo_edit'){hooks.undo();result={revision:revision()};}
+   else {result=await hooks[name](args);result.revision=revision();}
+   if(key){cache.set(key,{signature,result});if(cache.size>200)cache.delete(cache.keys().next().value);}
+   return result;
+  }finally{busy=false;}
+ };
+}

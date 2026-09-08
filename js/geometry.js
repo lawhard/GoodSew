@@ -32,25 +32,26 @@ export function pathLength(points) {
 // Resample a polyline into points spaced `spacing` mm apart along its length.
 // Always includes the first and last vertex. Returns at least the endpoints.
 export function resample(points, spacing) {
+  if (!Number.isFinite(spacing) || spacing <= 0) throw new Error("Resampling spacing must be positive.");
   if (points.length < 2) return points.slice();
   const out = [points[0]];
-  let carry = 0;
+  let needed = spacing;
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
-    let segLen = dist(a, b);
-    if (segLen === 0) continue;
-    const dir = norm(sub(b, a));
-    let pos = carry;
-    while (pos + spacing <= segLen) {
-      pos += spacing;
-      out.push(add(a, scale(dir, pos)));
+    const a = points[i - 1], b = points[i], length = dist(a, b);
+    if (length <= 1e-12) continue;
+    let used = 0;
+    while (length - used > 0 && length - used >= needed - Math.min(1e-10, spacing * 1e-6)) {
+      used = Math.min(length, used + needed);
+      const t = used / length;
+      out.push({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t});
+      needed = spacing;
     }
-    carry = pos + spacing - segLen;
+    // Carry the remaining distance TO the next sample, not an ever-growing
+    // offset. Many tiny input segments must still produce regular samples.
+    needed -= length - used;
   }
   const last = points[points.length - 1];
-  const lastOut = out[out.length - 1];
-  if (dist(lastOut, last) > 1e-6) out.push(last);
+  if (dist(out[out.length - 1], last) > 1e-6) out.push(last);
   return out;
 }
 

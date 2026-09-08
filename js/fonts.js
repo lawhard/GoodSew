@@ -106,13 +106,14 @@ export function loadedFont(name) {
 
 // Load (and cache) a font. Returns a Promise<opentype.Font>.
 export function loadFont(name) {
+  name = fontByName(name).name;
   if (_cache.has(name)) return Promise.resolve(_cache.get(name));
   if (_loading.has(name)) return _loading.get(name);
   const meta = fontByName(name);
   const p = new Promise((resolve, reject) => {
     if (!window.opentype) { reject(new Error("opentype.js not loaded")); return; }
     window.opentype.load(`fonts/${meta.file}`, (err, font) => {
-      if (err) { reject(err); return; }
+      if (err) { _loading.delete(name); reject(err); return; }
       _cache.set(meta.name, font);
       _loading.delete(meta.name);
       resolve(font);

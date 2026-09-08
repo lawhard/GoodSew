@@ -40,7 +40,7 @@ function foregroundMask(img) {
     }
     return [r / c, g / c, b / c];
   };
-  const corners = [patch(0, 0), patch(w - 3, 0), patch(0, h - 3), patch(w - 3, h - 3)];
+  const corners = [patch(0, 0), patch(Math.max(0,w - 3), 0), patch(0, Math.max(0,h - 3)), patch(Math.max(0,w - 3), Math.max(0,h - 3))];
   const TOL = 2400; // compuphase distance — perceptually "same color"
   let bg = null;
   for (let i = 0; i < 4 && !bg; i++) {
@@ -278,7 +278,7 @@ export function traceRaster(img, hoop, opts = {}) {
   if (!w || !h) throw new Error("empty image");
   const maxColors = Math.max(1, Math.min(8, opts.maxColors ?? 6));
 
-  const mask = foregroundMask(img);
+  const mask = opts.removeBackground === false ? Uint8Array.from({length:w*h},(_,i)=>img.data[i*4+3]>=128?1:0) : foregroundMask(img);
   const { assign: rawAssign, colors } = quantize(img, mask, maxColors);
   if (!colors.length) throw new Error("no foreground found — is the logo blank?");
   const assign = majority(rawAssign, w, h);

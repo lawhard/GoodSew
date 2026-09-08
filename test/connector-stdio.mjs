@@ -1,0 +1,5 @@
+import {spawn} from 'node:child_process';import {createInterface} from 'node:readline';import assert from 'node:assert/strict';
+const child=spawn(process.execPath,[new URL('../mcp/server.mjs',import.meta.url).pathname],{stdio:['pipe','pipe','pipe']});
+const pending=new Map();let seq=0;createInterface({input:child.stdout}).on('line',s=>{const r=JSON.parse(s);pending.get(r.id)?.(r);pending.delete(r.id);});
+const send=(method,params)=>new Promise(resolve=>{const id=++seq;pending.set(id,resolve);child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+try{const init=await send('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}});assert.equal(init.result.protocolVersion,'2025-11-25');const list=await send('tools/list',{});assert.equal(list.result.tools.length,7);const err=await send('tools/call',{name:'arbitrary_code',arguments:{code:'evil'}});assert.equal(err.result.isError,true);const ping=await send('ping',{});assert.deepEqual(ping.result,{});console.log('PASS MCP stdio initialize, tool discovery, unsupported tool rejection and ping');}finally{child.stdin.end();child.kill();}

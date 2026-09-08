@@ -1,3 +1,4 @@
+import {generateRailColumn} from './satin.js';
 // Stitch generators. Each takes an object's geometry + params and returns an
 // array of needle penetration points {x,y} in mm — the raw stitch path for that
 // object, before jumps/trims/color-changes are woven in by the compiler.
@@ -16,10 +17,10 @@ export function generateRunning(points, params) {
   let out = resample(points, sl);
   const repeats = Math.max(1, params.repeats || 1);
   if (repeats > 1) {
-    const full = [];
-    for (let r = 0; r < repeats; r++) {
-      const seq = r % 2 === 0 ? out : out.slice().reverse();
-      full.push(...(r === 0 ? seq : seq.slice(1)));
+    const full = [out[0]];
+    for (let i = 1; i < out.length; i++) {
+      for (let r = 0; r < Math.min(9, repeats); r++) full.push(r % 2 === 0 ? out[i] : out[i-1]);
+      if (repeats % 2 === 0) full.push(out[i]);
     }
     return full;
   }
@@ -45,6 +46,17 @@ export function generateSatin(points, params) {
     const n = perp(tangent);
     out.push(add(point, scale(n, half * side)));
     side = -side;
+  }
+  return out;
+}
+
+// Paired rails use full-cycle spacing: left → right → left per sample interval.
+// The far rail is sampled halfway along each interval, eliminating edge steps.
+export function satinRailPath(left, right) {
+  if (left.length !== right.length || left.length < 2) return [];
+  const out = [left[0]];
+  for (let i = 0; i + 1 < left.length; i++) {
+    out.push({x:(right[i].x+right[i+1].x)/2, y:(right[i].y+right[i+1].y)/2}, left[i+1]);
   }
   return out;
 }
@@ -328,7 +340,7 @@ export function fillContours(contours, params, occluders = []) {
   // sections falls back to tatami, which blends with every neighbor.
   for (const sec of sections) {
     if (sec.style !== "columns") continue;
-    if ((secAdj.get(sec.idx) || new Set()).size > 0) sec.style = "tatami";
+    if (!params.satinZigzag && (secAdj.get(sec.idx) || new Set()).size > 0) sec.style = "tatami";
   }
 
   // --- chain/subpath assembly with boundary-aware travel
@@ -412,6 +424,18 @@ export function fillContours(contours, params, occluders = []) {
     }
   };
 
+  const emitSmoothRails = (left, right) => {
+    const path = satinRailPath(left, right);
+    if (!path.length) return;
+    connectTo(path[0]);
+    for (let i = 1; i < path.length; i++) {
+      // A curved/concave boundary can invalidate an interpolated throw.
+      // Break the subpath instead of sewing through a letter counter.
+      if (segIn(curPt, path[i])) throwTo(path[i]);
+      else startChain(path[i]);
+    }
+  };
+
   // --- emitters (all work on a section, entered from end 'A' (top/left) or 'B')
   const emitLadder = (sec, end) => {
     const list = end === "A" ? sec.spans : sec.spans.slice().reverse();
@@ -421,8 +445,15 @@ export function fillContours(contours, params, occluders = []) {
     connectTo(mids[0]);
     if (wantUnderlay && mids.length >= 2) {
       // center-run underlay: down the ribbon and back (standard double run)
-      for (let i = 1; i < mids.length; i++) stitchTo(mids[i]);
-      for (let i = mids.length - 2; i >= 0; i--) stitchTo(mids[i]);
+      const walk = params.satinZigzag ? resample(mids, 2) : mids;
+      for (let i = 1; i < walk.length; i++) stitchTo(walk[i]);
+      for (let i = walk.length - 2; i >= 0; i--) stitchTo(walk[i]);
+    }
+    if (params.satinZigzag && list.length >= 2) {
+      emitSmoothRails(
+        list.map(({ri,si}) => ({x:span(ri,si).x0,y:rowYs[ri]})),
+        list.map(({ri,si}) => ({x:span(ri,si).x1,y:rowYs[ri]})));
+      return;
     }
     let lead = 0;
     for (let i = 0; i < list.length; i++) {
@@ -466,8 +497,13 @@ export function fillContours(contours, params, occluders = []) {
     const mids = cols.map((c) => ({ x: c.x, y: (c.y0 + c.y1) / 2 }));
     connectTo(mids[0]);
     if (wantUnderlay && mids.length >= 2) {
-      for (let i = 1; i < mids.length; i++) stitchTo(mids[i]);
-      for (let i = mids.length - 2; i >= 0; i--) stitchTo(mids[i]);
+      const walk = params.satinZigzag ? resample(mids, 2) : mids;
+      for (let i = 1; i < walk.length; i++) stitchTo(walk[i]);
+      for (let i = walk.length - 2; i >= 0; i--) stitchTo(walk[i]);
+    }
+    if (params.satinZigzag && cols.length >= 2) {
+      emitSmoothRails(cols.map(c=>({x:c.x,y:c.y0})),cols.map(c=>({x:c.x,y:c.y1})));
+      return;
     }
     let lead = 0;
     for (const c of cols) {
@@ -731,6 +767,7 @@ export function generateText(obj, occluders = []) {
 // Returns an array of sub-paths (each an array of penetration points). Multiple
 // sub-paths within one object are connected by jumps/trims by the compiler.
 export function generateForObject(obj, occluders = []) {
+  if (obj.kind === "satin-rails") return generateRailColumn(obj);
   switch (obj.type) {
     case "running": return [generateRunning(obj.points, obj.params)];
     case "satin": {

@@ -183,7 +183,9 @@ function drawObjectsSolid(ctx, cam, state, TH) {
   for (const obj of state.objects) {
     if (!obj.visible) continue;
     // Manual-digitized line objects: satin column band / running dash line.
-    if (obj.type === "satin" && obj.points.length >= 2) {
+    if (obj.kind === "satin-rails" && obj.contours) {
+      const path=pathFromContours(ctx,cam,obj.contours); ctx.fillStyle=obj.color;ctx.fill(path,"evenodd");continue;
+    } else if (obj.type === "satin" && obj.points.length >= 2) {
       const wpx = Math.max(2, (obj.params.width || 4) * cam.pxPerMm);
       ctx.lineCap = "round"; ctx.lineJoin = "round";
       ctx.beginPath();

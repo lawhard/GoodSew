@@ -4,6 +4,11 @@ node_modules/
 .DS_Store
 
 chrome-headless-shell/
-package.json
-package-lock.json
 scratch-*.png
+
+dist/
+*.zip
+
+!test/fixtures/*.pes
+
+.local/

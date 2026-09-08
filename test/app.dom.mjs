@@ -1,0 +1,28 @@
+import {Window} from 'happy-dom';
+import {readFileSync} from 'node:fs';
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const root=new URL('../',import.meta.url);
+const w=new Window({url:'http://localhost:8137',settings:{disableCSSFileLoading:true,disableJavaScriptFileLoading:true,enableJavaScriptEvaluation:false}});
+w.document.write(readFileSync(new URL('index.html',root),'utf8'));
+const noop=()=>{};globalThis.Path2D=class{constructor(){return new Proxy({},{get:()=>noop});}};
+const ctx=new Proxy({measureText:s=>({width:String(s).length*8}),createLinearGradient:()=>({addColorStop:noop}),createRadialGradient:()=>({addColorStop:noop}),createPattern:()=>({}),getImageData:()=>({data:new Uint8ClampedArray(100)})},{get:(o,k)=> k in o?o[k]:noop,set:(o,k,v)=>(o[k]=v,true)});
+w.HTMLCanvasElement.prototype.getContext=()=>ctx;
+w.HTMLElement.prototype.getBoundingClientRect=function(){return {x:0,y:0,left:0,top:0,right:900,bottom:650,width:900,height:650};};
+for(const key of ['window','document','localStorage','DOMParser','Image','HTMLElement','HTMLInputElement','HTMLSelectElement','HTMLTextAreaElement']) globalThis[key]=key==='window'?w:w[key];
+globalThis.devicePixelRatio=1;globalThis.requestAnimationFrame=()=>1;globalThis.cancelAnimationFrame=noop;globalThis.getComputedStyle=w.getComputedStyle.bind(w);globalThis.confirm=()=>true;
+const mod={exports:{}};new Function('module','exports',readFileSync(new URL('vendor/opentype.min.js',root),'utf8'))(mod,mod.exports);const ot=mod.exports;
+w.opentype={load:(url,cb)=>{try{const data=readFileSync(new URL(url,root));queueMicrotask(()=>cb(null,ot.parse(data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength))));}catch(err){cb(err);}}};
+if(process.argv.includes('--empty'))localStorage.setItem('goodsew.design.v1',JSON.stringify({version:4,objects:[]}));
+await import(new URL('js/app.js',root));await new Promise(r=>setTimeout(r,30));
+const gs=w.__gs; assert.ok(gs);
+if(process.argv.includes('--empty')){assert.equal(gs.state.objects.length,0);console.log('PASS empty project restores without reseeding');await w.happyDOM.abort();process.exit(0);}
+assert.equal(gs.state.objects.length,2);console.log('PASS application boot and font loading');
+await gs.renderStitches();assert.equal(gs.state.mode,'stitch');assert.ok(gs.compiledStats().stitches>100);assert.equal(document.querySelectorAll('.sequence-step').length,2);assert.ok(gs.exportBytes().length>512);console.log('PASS generate, spool order and PES export');
+const initial=gs.state.objects.length;document.getElementById('btn-new').click();assert.equal(gs.state.objects.length,0);gs.undo();assert.equal(gs.state.objects.length,initial);console.log('PASS New is undoable');
+gs.setMode('design');gs.selectAllObjects();gs.groupSelection();const group=gs.state.objects[0].groupId;gs.nudgeSelected(1,0);await new Promise(r=>setTimeout(r,400));gs.undo();assert.equal(gs.state.objects[0].groupId,group);assert.equal(gs.state.objects[1].groupId,group);console.log('PASS undo preserves groups');
+await gs.fitToHoop();const stats=gs.compiledStats();assert.ok(stats.width<=96&&stats.height<=96);console.log('PASS stitch-based hoop fitting');
+gs.addBasting();assert.equal(gs.state.objects[0].name,'Basting frame');assert.equal(gs.state.objects[0].type,'running');console.log('PASS basting inserted first');
+gs.state.fabric='knit';gs.setSel([]);gs.applyFabric();assert.equal(gs.state.objects[1].params.spacing,.5);console.log('PASS fabric defaults');
+document.getElementById('project-name').value='Garden patch';document.getElementById('project-name').dispatchEvent(new w.Event('input'));await new Promise(r=>setTimeout(r,1100));const saved=JSON.parse(localStorage.getItem('goodsew.design.v1'));assert.equal(saved.name,'Garden patch');assert.equal(saved.objects[0].type,'running');console.log('PASS named project autosave');
+await w.happyDOM.abort();process.exit(0);

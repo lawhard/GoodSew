@@ -15,6 +15,9 @@ export class Simulator {
   }
 
   setPlan(plan) {
+    this.playing = false;
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null; this._acc = 0; this.index = 0;
     this.total = plan ? plan.length : 0;
     if (this.index > this.total) this.index = this.total;
     this.engaged = false; // a freshly compiled design shows in full

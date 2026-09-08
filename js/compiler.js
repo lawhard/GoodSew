@@ -18,8 +18,7 @@ import { dist, sub, norm, add, scale, bbox } from "./geometry.js";
 // instead of double-stitching. Text and outline-only objects never knock out
 // (small lettering/borders are stitched ON TOP of fill, the standard
 // embroidery practice), nor do tiny detail pieces (< ~25 mm²).
-function occludersFor(obj) {
-  const order = state.objects;
+function occludersFor(obj, order = state.objects) {
   const i = order.indexOf(obj);
   if (i < 0) return [];
   const out = [];
@@ -52,8 +51,10 @@ function splitMove(a, b, maxLen) {
   return out;
 }
 
-export function compile() {
-  const blocks = colorBlocks();
+export function compile(objects = state.objects) {
+  const blocks = colorBlocks(objects).map(b => ({ ...b, objects: b.objects.map(obj => ({
+    obj, paths: generateForObject(obj, occludersFor(obj, objects)).filter(sp => sp && sp.length >= 2)
+  })).filter(entry => entry.paths.length) })).filter(b => b.objects.length);
   const plan = [];
   const colors = blocks.map((b) => ({ color: b.color, brother: b.brother }));
   let prev = null;  // last penetration point {x,y}
@@ -73,7 +74,8 @@ export function compile() {
     const dx = toward.x - pt.x, dy = toward.y - pt.y;
     const l = Math.hypot(dx, dy);
     if (l < 1e-3) return;
-    const q = { x: pt.x + (dx / l) * LOCK_MM, y: pt.y + (dy / l) * LOCK_MM };
+    const lockLength = Math.min(LOCK_MM, l);
+    const q = { x: pt.x + (dx / l) * lockLength, y: pt.y + (dy / l) * lockLength };
     push(q.x, q.y, "stitch", color);
     push(pt.x, pt.y, "stitch", color);
   };
@@ -86,8 +88,8 @@ export function compile() {
       push(prev ? prev.x : 0, prev ? prev.y : 0, "color", ci);
     }
 
-    for (const obj of block.objects) {
-      const subpaths = generateForObject(obj, occludersFor(obj)).filter((sp) => sp && sp.length >= 2);
+    let atColorStart = ci > 0;
+    for (const { paths: subpaths } of block.objects) {
       let firstOfObj = true;
       for (const pts of subpaths) {
         let fresh = false; // true = thread was just started/re-started here
@@ -104,10 +106,12 @@ export function compile() {
           // Distinct OBJECTS always tie off + trim between them too (unless
           // they practically touch) — a straight stitched bridge between two
           // separate design elements crosses whatever lies between them.
-          if (gap > TRIM_GAP_MM || pts._trimBefore || (firstOfObj && gap > 1.0)) {
+          if (atColorStart || gap > TRIM_GAP_MM || pts._trimBefore || (firstOfObj && gap > 0.1)) {
             // Disjoint sub-path: tie off, trim, jump across, restart.
-            lockAt(prev, prev2, ci);
-            push(prev.x, prev.y, "trim", ci);
+            if (!atColorStart) {
+              lockAt(prev, prev2, ci);
+              push(prev.x, prev.y, "trim", ci);
+            }
             for (const p of splitMove(prev, pts[0], MAX_MOVE_MM)) push(p.x, p.y, "jump", ci);
             push(pts[0].x, pts[0].y, "stitch", ci);
             fresh = true;
@@ -127,6 +131,7 @@ export function compile() {
           }
         }
         firstOfObj = false;
+        atColorStart = false;
       }
     }
   });
@@ -166,7 +171,8 @@ function removeShortStitches(plan, MIN = 0.4, BAND = 0.08) {
       if (dAP < MIN) {
         const vx = C.x - A.x, vy = C.y - A.y, L = Math.hypot(vx, vy) || 1;
         const perp = Math.abs((s.x - A.x) * vy - (s.y - A.y) * vx) / L;
-        if (perp < BAND) continue; // truly collinear micro-stitch → drop
+        const forward = (s.x - A.x) * (C.x - s.x) + (s.y - A.y) * (C.y - s.y);
+        if (perp < BAND && forward >= 0) continue; // truly collinear micro-stitch → drop
       }
     }
     out.push(s);

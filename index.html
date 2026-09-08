@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GoodSew — SE700 Embroidery Designer</title>
+  <title>Good Sew Studio — Embroidery Designer</title>
   <meta name="description" content="Design text and logos, then turn them into real machine stitches — right in your browser. A free in-browser embroidery digitizer built for the Brother SE700." />
   <meta name="theme-color" content="#2e7df6" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -25,34 +25,38 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.8.1" />
+  <link rel="stylesheet" href="css/styles.css?v=0.11.0" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.8.1",
-      "./js/hoop.js": "./js/hoop.js?v=0.8.1",
-      "./js/threads.js": "./js/threads.js?v=0.8.1",
-      "./js/compiler.js": "./js/compiler.js?v=0.8.1",
-      "./js/stats.js": "./js/stats.js?v=0.8.1",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.8.1",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.8.1",
-      "./js/render.js": "./js/render.js?v=0.8.1",
-      "./js/simulator.js": "./js/simulator.js?v=0.8.1",
-      "./js/geometry.js": "./js/geometry.js?v=0.8.1",
-      "./js/shapes.js": "./js/shapes.js?v=0.8.1",
-      "./js/fonts.js": "./js/fonts.js?v=0.8.1",
-      "./js/units.js": "./js/units.js?v=0.8.1",
-      "./js/preview.js": "./js/preview.js?v=0.8.1",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.8.1",
-      "./js/import/raster.js": "./js/import/raster.js?v=0.8.1",
-      "./js/qa.js": "./js/qa.js?v=0.8.1",
-      "./js/stitches.js": "./js/stitches.js?v=0.8.1",
-      "./js/view3d.js": "./js/view3d.js?v=0.8.1",
-      "three": "./vendor/three.module.min.js?v=0.8.1",
-      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.8.1"
+      "./js/state.js": "./js/state.js?v=0.11.0",
+      "./js/hoop.js": "./js/hoop.js?v=0.11.0",
+      "./js/threads.js": "./js/threads.js?v=0.11.0",
+      "./js/compiler.js": "./js/compiler.js?v=0.11.0",
+      "./js/stats.js": "./js/stats.js?v=0.11.0",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.11.0",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.11.0",
+      "./js/render.js": "./js/render.js?v=0.11.0",
+      "./js/simulator.js": "./js/simulator.js?v=0.11.0",
+      "./js/geometry.js": "./js/geometry.js?v=0.11.0",
+      "./js/shapes.js": "./js/shapes.js?v=0.11.0",
+      "./js/fonts.js": "./js/fonts.js?v=0.11.0",
+      "./js/units.js": "./js/units.js?v=0.11.0",
+      "./js/preview.js": "./js/preview.js?v=0.11.0",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.11.0",
+      "./js/import/raster.js": "./js/import/raster.js?v=0.11.0",
+      "./js/order.js": "./js/order.js?v=0.11.0",
+      "./js/sewing.js": "./js/sewing.js?v=0.11.0",
+      "./js/qa.js": "./js/qa.js?v=0.11.0",
+      "./js/stitches.js": "./js/stitches.js?v=0.11.0",
+      "./js/import/pes.js": "./js/import/pes.js?v=0.11.0",
+      "./js/thread-model.js": "./js/thread-model.js?v=0.11.0",
+      "./js/view3d.js": "./js/view3d.js?v=0.11.0",
+      "three": "./vendor/three.module.min.js?v=0.11.0",
+      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.11.0"
     }
   }
   </script>
@@ -61,13 +65,13 @@
   <header id="topbar">
     <div class="brand">
       <span class="logo">✦</span>
-      <span class="title">GoodSew</span>
+      <span class="title">Good Sew<span class="studio-word">STUDIO</span></span>
       <span class="subtitle">Brother SE700</span>
     </div>
 
     <div class="topbar-actions">
       <button id="btn-new" class="btn" title="New design">New</button>
-      <button id="btn-reset" class="btn" title="Reset to the sample heart + GoodSew design">Reset</button>
+      <button id="btn-reset" class="btn" title="Reset to the sample heart + GoodSew design">Sample</button>
       <button id="btn-save-json" class="btn" title="Save project">Save</button>
       <button id="btn-load-json" class="btn" title="Open project">Open</button>
 
@@ -78,7 +82,7 @@
       <span class="sep"></span>
 
       <!-- design phase -->
-      <button id="btn-render" class="btn btn-primary btn-big mode-design" title="Turn your design into a stitch pattern">⚡ Render Stitches</button>
+      <button id="btn-render" class="btn btn-primary btn-big mode-design" title="Turn your design into a stitch pattern">Generate stitches →</button>
 
       <!-- stitch phase -->
       <button id="btn-back" class="btn mode-stitch" title="Back to editing">← Edit Design</button>
@@ -88,6 +92,8 @@
       <button id="btn-export-pes" class="btn btn-primary mode-stitch" title="Export to Brother PES">Export PES</button>
 
       <span class="sep"></span>
+      <button id="btn-preview-pes" class="btn" title="Preview a PES or PEC file without changing your project">Preview PES</button>
+      <input id="file-pes" type="file" accept=".pes,.pec" hidden/>
       <button id="btn-theme" class="btn btn-icon" title="Toggle light / dark">◐</button>
 
       <input type="file" id="file-svg" accept=".svg,.png,.jpg,.jpeg,.webp,.gif,image/svg+xml,image/png,image/jpeg,image/webp,image/gif" hidden />
@@ -95,6 +101,10 @@
     </div>
   </header>
 
+  <div id="projectbar">
+    <div class="project-identity"><label for="project-name">PROJECT</label><input id="project-name" maxlength="80" value="My design" aria-label="Project name"/><span id="save-status" role="status">Saved in this browser</span></div>
+    <div class="workflow"><span class="workflow-design">01 Design</span><span class="workflow-stitch">02 Check stitches</span><span>03 Sew</span><button id="btn-help" class="btn">Quick guide</button></div>
+  </div>
   <div id="workspace">
     <!-- Left: tools -->
     <aside id="toolbar">
@@ -132,6 +142,9 @@
       </div>
 
       <div class="tool-group">
+        <div class="group-label">Artwork import</div>
+        <label for="import-colors">Max colors</label><select id="import-colors" class="select"><option>2</option><option>3</option><option>4</option><option selected>6</option><option>8</option></select>
+        <label class="check"><input id="import-background" type="checkbox" checked/> Remove background</label>
         <div class="group-label">View</div>
         <label class="check"><input type="checkbox" id="chk-show-grid" checked /> Grid</label>
         <label class="check"><input type="checkbox" id="chk-show-hoop" checked /> Hoop</label>
@@ -140,7 +153,10 @@
 
     <!-- Center -->
     <main id="canvas-wrap">
-      <canvas id="canvas"></canvas>
+      <canvas id="canvas" aria-label="Embroidery design canvas. Use the tools to add artwork and the properties panel to edit it."></canvas>
+      <div class="canvas-heading"><span class="eyebrow">YOUR EMBROIDERY FIELD</span><strong>100 × 100 <small>mm</small></strong><span>Brother SE700 · 4-inch hoop</span></div>
+      <div id="design-status" role="status" class="design-status">Your hoop is ready</div>
+      <div class="view-controls"><button id="btn-zoom-out" aria-label="Zoom out">−</button><button id="btn-fit-view">Fit view</button><button id="btn-zoom-in" aria-label="Zoom in">+</button></div>
       <input id="text-editor" class="text-editor hidden" type="text" spellcheck="false" />
       <div id="canvas-hud">
         <span id="hud-coords">0.0, 0.0</span>
@@ -154,13 +170,18 @@
       </div>
       <div id="empty-hint" class="empty-hint">
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
-        right, hit <b>⚡ Render Stitches</b>.
+        right, hit <b>Generate stitches →</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.8.1</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.11.0</div>
     </main>
 
     <!-- Right -->
     <aside id="sidepanel">
+      <section class="panel preparation"><h3>Prepare to sew</h3>
+        <label for="fabric-select">Fabric</label><select id="fabric-select" class="select"><option value="woven">Woven cotton</option><option value="knit">T-shirt / knit</option><option value="towel">Towel / fleece</option></select>
+        <p id="fabric-note" class="prop-hint"></p><button id="btn-fabric" class="btn" title="Apply starting settings to selected objects, or all objects if nothing is selected">Apply starting settings</button>
+        <div class="prepare-actions"><button id="btn-fit-hoop" class="btn">Fit to hoop</button><button id="btn-baste" class="btn">Add basting</button></div>
+      </section>
       <section class="panel mode-design" id="object-panel">
         <h3 id="props-title">Properties</h3>
         <div id="object-props" class="props-empty">Select or add an object to edit it.</div>
@@ -178,22 +199,23 @@
         <ul id="object-list" class="object-list"></ul>
       </section>
 
+      <section class="panel mode-stitch"><h3>Spool order</h3><div id="thread-sequence">Generate stitches to see spool order.</div><button id="btn-sew-sheet" class="btn">Download sewing sheet</button></section>
       <section class="panel mode-stitch" id="stats-panel">
         <h3>Statistics</h3>
         <table class="stats">
           <tr><td>Stitches</td><td id="stat-stitches">0</td></tr>
           <tr><td>Thread changes</td><td id="stat-colors">0</td></tr>
           <tr><td>Jumps</td><td id="stat-jumps">0</td></tr>
-          <tr><td>Trims</td><td id="stat-trims">0</td></tr>
+          <tr><td>Planned trims</td><td id="stat-trims">0</td></tr>
           <tr><td>Dimensions</td><td id="stat-dims">—</td></tr>
-          <tr><td>Est. run time</td><td id="stat-time">—</td></tr>
+          <tr><td>Estimated time</td><td id="stat-time">—</td></tr>
         </table>
       </section>
 
       <section class="panel mode-stitch" id="quality-panel">
         <h3>Quality Check</h3>
         <div id="quality-list" class="quality-list"></div>
-        <button id="btn-optimize" class="btn" style="width:100%;margin-top:8px" title="Reorder objects to group colors and shorten travel">Optimize order</button>
+        <button id="btn-optimize" class="btn" style="width:100%;margin-top:8px" title="Reduce thread changes while preserving overlapping layer order">Optimize order</button>
       </section>
 
       <section class="panel">
@@ -224,6 +246,12 @@
     </div>
   </footer>
 
+  <dialog id="help-dialog"><div class="guide-head"><span class="eyebrow">FROM ARTWORK TO THREAD</span><button id="help-close" class="btn" aria-label="Close quick guide">Close</button></div><h2>Your first stitch-out</h2>
+    <ol><li><b>Design.</b> Add lettering, shapes, or a clean SVG/PNG logo. Keep small lettering bold and readable. Select a layer to edit its size; Shift-click selects more.</li><li><b>Prepare.</b> Choose fabric and apply starting settings. Fit to hoop reserves space at the edges. Basting adds a removable outline before the design.</li><li><b>Check.</b> Generate stitches. Inspect holes, crossings, and tiny details. Play the sewing sequence and review the quality messages. Smaller row spacing means denser stitching.</li><li><b>Sew.</b> Download PES and the sewing sheet. Copy PES to a compatible USB drive, recall it on the SE700, and test on matching scrap. Use the sheet for spool order.</li></ol>
+    <p>Wireless transfer uses Brother Design Database Transfer on a compatible Windows PC. Good Sew does not connect directly to the machine.</p><p>Digital previews cannot predict fabric distortion or thread tension. Jump threads may need manual cutting. PES palette colors are approximations of your chosen spools.</p>
+    <p><b>Shortcuts:</b> V select · T text · S shapes · Enter finish drawing · Esc cancel · Space + drag pan · arrows nudge · Ctrl/Cmd + Z undo. Projects save in this browser; use Save for a portable backup.</p>
+    <a href="https://download.brother.com/welcome/doch102582/888p10_om01en.pdf" target="_blank" rel="noopener">Brother SE700 operation manual ↗</a>
+  </dialog>
   <!-- Thread color picker popover (New brothread palette) -->
   <div id="color-popover" class="popover color-popover hidden">
     <div class="popover-title">New brothread thread <span class="muted">— pick the spool you'll use</span></div>
@@ -276,36 +304,54 @@
   </div>
 
   <!-- 3D stitch viewer modal -->
-  <div id="view3d-modal" class="modal hidden">
+  <dialog id="view3d-modal" class="modal hidden" aria-labelledby="view3d-title">
     <div class="modal-card modal-card-3d">
-      <div class="modal-head">
-        <h2>3D Stitch View <span class="muted">— drag to orbit · scroll to zoom · right-drag to pan · double-click to recenter</span></h2>
-        <div id="view3d-views" class="view3d-views">
-          <button class="btn" data-view="home" title="Reset to the ¾ overview of the design">⌂ Reset</button>
-          <button class="btn" data-view="top" title="Look straight down">Top</button>
-          <button class="btn" data-view="front" title="Low front angle">Front</button>
-          <button class="btn" data-view="hoop" title="Zoom out to the whole hoop">Hoop</button>
-        </div>
-        <button id="view3d-close" class="btn">✕ Close</button>
+      <div class="modal-head viewer-head">
+        <div><span class="eyebrow">THREAD LAB</span><h2 id="view3d-title">3D embroidery preview</h2><p id="view3d-summary" class="viewer-summary"></p></div>
+        <div class="viewer-head-actions"><button id="view3d-load" class="btn">Open PES</button><button id="view3d-snapshot" class="btn">Save image</button><button id="view3d-close" class="btn" aria-label="Close 3D viewer">Close ✕</button></div>
       </div>
-      <div id="view3d-stage" class="view3d-stage"></div>
+      <div class="viewer-body">
+        <div class="viewer-stage-wrap">
+          <div id="view3d-stage" class="view3d-stage"></div>
+          <div id="view3d-views" class="view3d-views"><button class="btn" data-view="home">Reset view</button><button class="btn" data-view="top">Top</button><button class="btn" data-view="front">Low angle</button><button class="btn" data-view="hoop">Whole hoop</button></div>
+          <span class="viewer-navigation">Drag to orbit · Shift-drag to pan · scroll to zoom · click a strand to inspect</span>
+        </div>
+        <aside id="view3d-controls" class="viewer-controls">
+          <section><h3>Thread material</h3>
+            <label for="v3-finish">Finish</label><select id="v3-finish" data-setting="finish"><option value="polyester">Polyester · balanced sheen</option><option value="rayon">Rayon · glossy</option><option value="cotton">Cotton · soft matte</option></select>
+            <label for="v3-diameter">Diameter <output data-value="diameter">0.24</output> mm</label><input id="v3-diameter" data-setting="diameter" type="range" min="0.12" max="0.6" step="0.01" value="0.24"/>
+            <label for="v3-loft">Thread loft <output data-value="loft">0.55</output></label><input id="v3-loft" data-setting="loft" type="range" min="0" max="1" step="0.05" value="0.55"/>
+            <label class="check"><input data-setting="layering" type="checkbox" checked/> Estimate overlap height</label>
+            <p>Diameter and loft are preview assumptions. PES does not encode thread weight, tension, or fabric deformation.</p>
+          </section>
+          <section><h3>Fabric & lighting</h3>
+            <label for="v3-fabric">Fabric color</label><input id="v3-fabric" data-setting="fabric" type="color" value="#e4dfd1"/>
+            <label for="v3-weave">Weave spacing <output data-value="weave">0.55</output> mm</label><input id="v3-weave" data-setting="weave" type="range" min="0.2" max="1.2" step="0.05" value="0.55"/>
+            <label for="v3-light">Light direction <output data-value="lightAngle">315</output>°</label><input id="v3-light" data-setting="lightAngle" type="range" min="0" max="360" step="5" value="315"/>
+            <label for="v3-height">Light elevation <output data-value="lightHeight">50</output>°</label><input id="v3-height" data-setting="lightHeight" type="range" min="15" max="85" step="5" value="50"/>
+            <label for="v3-exposure">Exposure <output data-value="exposure">1.05</output></label><input id="v3-exposure" data-setting="exposure" type="range" min="0.4" max="1.8" step="0.05" value="1.05"/>
+          </section>
+          <section><h3>Inspect</h3>
+            <label for="v3-quality">Surface detail</label><select id="v3-quality" data-setting="quality"><option value="economy">Economy · faster</option><option value="balanced" selected>Detailed</option><option value="macro">Macro · best close-up</option></select>
+            <label class="check"><input data-setting="showJumps" type="checkbox"/> Show travel paths</label><label class="check"><input data-setting="showHoles" type="checkbox"/> Show needle points</label><label class="check"><input data-setting="showHoop" type="checkbox" checked/> Show SE700 hoop</label>
+            <button id="view3d-reset-material" class="btn">Reset materials & lighting</button>
+          </section>
+          <section><h3>Thread sequence</h3><p>Colors affect this preview only. Click a name to seek to that block.</p><div id="view3d-threads"></div></section>
+          <p id="view3d-file-notes" class="viewer-file-notes"></p>
+        </aside>
+      </div>
       <div class="modal-foot view3d-foot">
-        <button id="view3d-play" class="btn btn-primary" title="Play the sew order">▶</button>
-        <input type="range" id="view3d-scrub" class="sim-scrub" min="0" max="0" value="0" />
-        <select id="view3d-speed" class="select view3d-speed" title="Playback speed">
-          <option value="2">Slow</option>
-          <option value="6" selected>Normal</option>
-          <option value="20">Fast</option>
-          <option value="60">Turbo</option>
-        </select>
-        <span id="view3d-counter" class="muted view3d-counter">0 / 0</span>
+        <button id="view3d-play" class="btn btn-primary" aria-label="Play or pause stitch sequence">▶</button>
+        <input type="range" id="view3d-scrub" class="sim-scrub" min="0" max="0" value="0" aria-label="Sewn stitches"/>
+        <select id="view3d-speed" class="select view3d-speed" aria-label="Playback speed"><option value="6.6666667">SE700 max · 400/min</option><option value="100">100 stitches/sec</option><option value="400" selected>400 stitches/sec</option><option value="2000">2,000 stitches/sec</option></select>
+        <span id="view3d-counter" class="muted view3d-counter">0 / 0 stitches</span>
       </div>
     </div>
-  </div>
+  </dialog>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.8.1"></script>
+  <script type="module" src="js/app.js?v=0.11.0"></script>
 </body>
 </html>

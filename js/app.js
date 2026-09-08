@@ -1,3 +1,6 @@
+import {bakeRails} from './satin.js';
+import {createDesignController} from './design-commands.js';
+import {mountAssistantPanel} from './assistant-panel.js';
 // GoodSew — SE700 embroidery designer. Main application controller.
 //
 // Two phases:
@@ -20,9 +23,11 @@ import { UNITS, fmt, toUnit, fromUnit } from "./units.js";
 import { PRODUCTS, getProduct, renderPreview } from "./preview.js";
 import { parseSVG } from "./import/svg.js";
 import { traceRaster, RASTER_MAX_DIM } from "./import/raster.js";
+import { optimizeObjects } from "./order.js";
+import { buildSewSheet, FABRICS, fileStem } from "./sewing.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.8.1"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.11.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -114,6 +119,7 @@ function recompile() {
   $("sim-scrub").max = compiled.plan.length;
   refreshStats();
   refreshQuality();
+  refreshSewing();
   needsRender = true;
 }
 function ensureCompiled() { if (state.planDirty || !compiled) recompile(); }
@@ -134,10 +140,10 @@ function refreshQuality() {
     const oy = Math.min(a.cy + a.h / 2, b.cy + b.h / 2) - Math.max(a.cy - a.h / 2, b.cy - b.h / 2);
     if (ox > 1 && oy > 1) overlaps++;
   }
-  if (overlaps > 0) list.push({ sev: "info", msg: `${overlaps} overlapping object pair${overlaps === 1 ? "" : "s"} — hidden fill removed automatically (lower layers tuck under upper)` });
+  if (overlaps > 0) list.push({ sev: "info", msg: `${overlaps} overlapping object pair${overlaps === 1 ? "" : "s"} — check the stitch preview; solid fill overlaps are reduced, outlines and lettering sew on top` });
 
   host.innerHTML = "";
-  if (!list.length) { host.className = "quality-list ok"; host.textContent = "✓ No issues found."; return; }
+  if (!list.length) { host.className = "quality-list ok"; host.textContent = "✓ Automated checks passed. Test on matching scrap before stitching your project."; return; }
   host.className = "quality-list";
   for (const w of list) {
     const d = document.createElement("div");
@@ -151,27 +157,15 @@ function refreshQuality() {
 // neighbor within each color (less travel), reducing jumps/trims.
 function optimizeOrder() {
   if (state.objects.length < 3) { toast("Nothing to optimize."); return; }
-  const colorOrder = [], groups = new Map();
-  for (const o of state.objects) {
-    if (!groups.has(o.color)) { groups.set(o.color, []); colorOrder.push(o.color); }
-    groups.get(o.color).push(o);
-  }
-  const rep = (o) => { const b = getObjBox(o); return { x: b.cx, y: b.cy }; };
-  const out = [];
-  let cursor = { x: 0, y: 0 };
-  for (const col of colorOrder) {
-    const pool = groups.get(col).slice();
-    while (pool.length) {
-      let bi = 0, bd = Infinity;
-      for (let i = 0; i < pool.length; i++) { const d = dist(cursor, rep(pool[i])); if (d < bd) { bd = d; bi = i; } }
-      const o = pool.splice(bi, 1)[0];
-      out.push(o); cursor = rep(o);
-    }
-  }
-  state.objects = out;
+  state.objects = optimizeObjects(state.objects, (o) => {
+    const pts = o.type === "text" ? (o._glyphs || []).flat(2).map(p => ({x:p.x + o.points[0].x,y:p.y + o.points[0].y})) : (o.contours || [o.points]).flat();
+    const b = pts.length ? bbox(pts) : { minX:0,minY:0,maxX:0,maxY:0 };
+    const pad = o.kind === "satin-rails" ? .2+(o.params.pull||0) : o.type === "satin" ? (o.params.width || 4)/2 + (o.params.pull || 0) : o.params.fillMode === "outline" ? (o.params.borderWidth || 2)/2 : 0.8;
+    return { minX:b.minX-pad,minY:b.minY-pad,maxX:b.maxX+pad,maxY:b.maxY+pad };
+  });
   markDirty(); recompile(); commit();
   refreshObjectList(); needsRender = true;
-  toast("Optimized stitch order");
+  toast("Order optimized; overlapping layers kept in sequence.");
 }
 
 function refreshStats() {
@@ -197,7 +191,8 @@ function autosave() {
 }
 function flushAutosave() {
   clearTimeout(autosaveTimer);
-  try { localStorage.setItem(AUTOSAVE_KEY, serialize()); } catch { /* quota/private mode */ }
+  try { localStorage.setItem(AUTOSAVE_KEY, serialize()); $("save-status").textContent = "Saved in this browser"; }
+  catch { $("save-status").textContent = "Browser storage unavailable — download a project backup"; }
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAutosave(); });
 window.addEventListener("pagehide", flushAutosave);
@@ -208,7 +203,7 @@ function restoreAutosaved() {
     const s = localStorage.getItem(AUTOSAVE_KEY);
     if (!s) return false;
     const data = JSON.parse(s);
-    if (!data || !Array.isArray(data.objects) || !data.objects.length) return false;
+    if (!data || !Array.isArray(data.objects) ) return false;
     deserialize(s);
     state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
     return true;
@@ -220,9 +215,10 @@ let undoStack = [], redoStack = [], commitTimer = null;
 
 function historySnapshot() {
   return JSON.stringify({
+    name: state.name, fabric: state.fabric,
     objects: state.objects.map((o) => ({
       id: o.id, type: o.type, name: o.name, color: o.color, kind: o.kind,
-      box: o.box, rotation: o.rotation || 0, points: o.points, base: o._base,
+      box: o.box, rotation: o.rotation || 0, points: o.points, contours: o.contours, base: o._base, groupId: o.groupId,
       params: { ...o.params }, visible: o.visible,
     })),
     guides: state.guides,
@@ -231,6 +227,7 @@ function historySnapshot() {
 }
 // Record the current state as a new undo step (immediate).
 function commit() {
+  clearTimeout(commitTimer);
   const snap = historySnapshot();
   if (undoStack.length && undoStack[undoStack.length - 1] === snap) return;
   undoStack.push(snap);
@@ -241,10 +238,11 @@ function commit() {
 }
 // Debounced commit for rapid edits (typing, dragging a slider).
 function commitSoon() { clearTimeout(commitTimer); commitTimer = setTimeout(commit, 350); }
-function resetHistory() { undoStack = []; redoStack = []; commit(); }
+function resetHistory() { clearTimeout(commitTimer); undoStack = []; redoStack = []; commit(); }
 
 function restore(snap) {
   const data = JSON.parse(snap);
+  state.name = data.name || "My design"; state.fabric = data.fabric || "woven"; syncProjectUI();
   state.objects = data.objects.map((o) => ({ ...o, _base: o.base, params: { ...o.params } }));
   state.guides = data.guides || [];
   setSel((data.selectedIds || (data.selectedId != null ? [data.selectedId] : [])).filter((id) => data.objects.some((o) => o.id === id)));
@@ -255,6 +253,7 @@ function restore(snap) {
   autosave(); // undo/redo should persist across reloads too
 }
 function undo() {
+  if (historySnapshot() !== undoStack[undoStack.length - 1]) commit();
   clearTimeout(commitTimer);
   if (undoStack.length < 2) return;
   redoStack.push(undoStack.pop());
@@ -302,6 +301,7 @@ function selectedObjects() {
 // Move an object by (dx,dy) mm, keeping its baked geometry in sync.
 function translateObject(obj, dx, dy) {
   obj.points = (obj.points || []).map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  if (obj.contours && !obj.box) obj.contours = obj.contours.map(c => c.map(p => ({x:p.x+dx,y:p.y+dy})));
   if (obj.box) { obj.box = { ...obj.box, x: obj.box.x + dx, y: obj.box.y + dy }; rebuildShape(obj); }
 }
 
@@ -339,7 +339,7 @@ function cloneData(o) {
   return JSON.parse(JSON.stringify({
     type: o.type, name: o.name, color: o.color, kind: o.kind, box: o.box,
     rotation: o.rotation || 0, points: o.points, params: o.params,
-    visible: o.visible, groupId: o.groupId, base: o._base,
+    visible: o.visible, groupId: o.groupId, base: o._base, contours: o.contours,
   }));
 }
 // Instantiate cloned object data offset by `off` mm, select the new copies.
@@ -371,7 +371,7 @@ function addLogoItems(parsed, srcLabel) {
   const ids = [];
   const gid = nextId(); // group every piece so the logo selects/moves as one
   parsed.items.forEach((it, i) => {
-    const obj = makeObject("fill", [], it.color);
+    const obj = makeObject(it.running ? "running" : "fill", [], it.color);
     obj.kind = "svg"; obj._base = it.base; obj.box = { ...parsed.box };
     obj.params.fillMode = it.outline ? "outline" : "fill";
     obj.name = `Logo part ${i + 1}`;
@@ -387,7 +387,7 @@ function addLogoItems(parsed, srcLabel) {
 // Import an SVG's geometry as editable fill/outline objects.
 function importSVG(text) {
   let parsed;
-  try { parsed = parseSVG(text, getHoop(state.hoopId)); }
+  try { parsed = parseSVG(text, getHoop(state.hoopId), {removeBackground:$("import-background").checked}); }
   catch (e) { toast("SVG import failed: " + e.message, true); return; }
   addLogoItems(parsed, "SVG");
 }
@@ -423,13 +423,14 @@ function importRasterImage(imgEl) {
 }
 function importRasterData(imgData) {
   let parsed;
-  try { parsed = traceRaster(imgData, getHoop(state.hoopId)); }
+  try { parsed = traceRaster(imgData, getHoop(state.hoopId), {maxColors:Number($("import-colors").value),removeBackground:$("import-background").checked}); }
   catch (e) { toast("Logo trace failed: " + e.message, true); return; }
   addLogoItems(parsed, "your logo");
 }
 
 // Route an uploaded logo file to the right importer by type.
 function importLogoFile(f) {
+  if (f.size > 20 * 1024 * 1024) {toast("Choose an image smaller than 20 MB.",true);return;}
   const isSvg = /\.svg$/i.test(f.name) || f.type === "image/svg+xml";
   if (isSvg) {
     const reader = new FileReader();
@@ -493,6 +494,7 @@ function distributeSelected(axis) {
 
 // ------------------------------------------------------------ object baking
 function rebuildShape(obj) {
+  if(obj.kind === "satin-rails") { bakeRails(obj); return; }
   if (!obj.box) return;
   // Imported SVG art: map its normalized base contours into the box (+rotation).
   if (obj.kind === "svg" && obj._base) {
@@ -554,15 +556,17 @@ function setMode(mode) {
 }
 
 async function renderStitches() {
-  if (!state.objects.length) { toast("Add some text or shapes first.", true); return; }
-  // Make sure every text object's font is loaded & baked before compiling.
-  const texts = state.objects.filter((o) => o.type === "text");
-  await Promise.all(texts.map((o) => loadFont(o.params.font).then(() => bakeText(o)).catch(() => {})));
-  markDirty();
-  setMode("stitch");
-  recompile();
-  const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing rendered — check your objects.", true); }
+  if (drawing) finishDrawing();
+  if (editing) closeTextEditor(true);
+  if (!state.objects.some(o => o.visible)) { toast("Add visible text or shapes first.", true); return; }
+  const button = $("btn-render"); button.disabled = true; button.textContent = "Generating…";
+  try {
+    const texts = state.objects.filter(o => o.visible && o.type === "text");
+    await Promise.all(texts.map(async o => { await loadFont(o.params.font); bakeText(o); }));
+    markDirty(); setMode("stitch");
+    if (!computeStats(compiled).stitches) toast("Nothing rendered — check your objects.", true);
+  } catch (err) { toast("Could not generate stitches: " + err.message, true); }
+  finally { button.disabled = false; button.textContent = "Generate stitches →"; }
 }
 
 // ----------------------------------------------------------------- tools
@@ -876,7 +880,7 @@ canvas.addEventListener("mousemove", (e) => {
       it.obj.points = it.orig.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
       if (it.orig.box) {
         it.obj.box = { ...it.orig.box, x: it.orig.box.x + dx, y: it.orig.box.y + dy };
-        if (it.obj.kind === "svg") rebuildShape(it.obj); // remap contours to the moved box
+        if (["svg","satin-rails"].includes(it.obj.kind)) rebuildShape(it.obj); // remap contours to the moved box
       }
     }
     markDirty();
@@ -1287,6 +1291,7 @@ function shapeSVG(kind) {
 
 // ----------------------------------------------------------- objects list
 function refreshObjectList() {
+  refreshSewing();
   const ul = $("object-list");
   ul.innerHTML = "";
   $("object-count").textContent = `(${state.objects.length})`;
@@ -1488,22 +1493,27 @@ function buildMultiProps(host) {
 function rowFull(host, labelText, el) {
   const d = document.createElement("div"); d.className = "prop-full";
   const l = document.createElement("label"); l.textContent = labelText;
+  if (!el.id) el.id = `control-${nextId()}`; l.htmlFor = el.id;
   d.append(l, el); host.appendChild(d);
 }
 function row(host, labelText, el) {
   const d = document.createElement("div"); d.className = "prop-row";
   const l = document.createElement("label"); l.textContent = labelText;
+  if (!el.id) el.id = `control-${nextId()}`; l.htmlFor = el.id;
   d.append(l, el); host.appendChild(d);
 }
 function numInput(val, step, min, onChange) {
   const i = document.createElement("input");
   i.type = "number"; i.value = round(val); i.step = step; if (min != null) i.min = min;
-  i.oninput = () => { const v = parseFloat(i.value); if (!isNaN(v)) { onChange(v); commitSoon(); } };
+  i.oninput = () => { const v = Number(i.value); if (i.value !== "" && Number.isFinite(v) && (min == null || v >= min) && Math.abs(v) <= 10000) { onChange(v); commitSoon(); } };
   return i;
 }
 const round = (v) => Math.round(v * 1000) / 1000;
 
 function buildTextProps(host, obj) {
+  const round=document.createElement('button');round.className='btn';round.textContent='Use Satin Round lettering';
+  round.onclick=()=>replaceWithSatinRound(obj);host.append(round);
+  const info=document.createElement('p');info.className='prop-hint';info.textContent='Satin Round uses authored curved columns. Converts this text to editable satin objects; Undo restores the outline font.';host.append(info);
   $("props-title").textContent = "Text";
   const t = document.createElement("input");
   t.type = "text"; t.value = obj.params.text;
@@ -1567,16 +1577,16 @@ function buildShapeProps(host, obj) {
 // Satin column: simple by default (just a width), detail if you want it.
 function buildSatinProps(host, obj) {
   $("props-title").textContent = "Satin line";
-  row(host, "Width (mm)", numInput(obj.params.width ?? 4, 0.5, 0.5, (v) => { obj.params.width = Math.max(0.5, Math.min(10, v)); markDirty(); needsRender = true; commitSoon(); }));
-  row(host, "Density (mm)", numInput(obj.params.density ?? 0.4, 0.05, 0.2, (v) => { obj.params.density = Math.max(0.2, Math.min(1.2, v)); markDirty(); commitSoon(); }));
-  row(host, "Pull comp (mm)", numInput(obj.params.pull ?? 0.2, 0.1, 0, (v) => { obj.params.pull = Math.max(0, Math.min(1, v)); markDirty(); commitSoon(); }));
+  if(obj.kind!=="satin-rails") row(host, "Width (mm)", numInput(obj.params.width ?? 4, 0.5, 0.5, (v) => { obj.params.width = Math.max(0.5, Math.min(10, v)); markDirty(); needsRender = true; commitSoon(); }));
+  row(host, "Row spacing (mm)", numInput(obj.params.density ?? 0.4, 0.05, 0.2, (v) => { obj.params.density = Math.max(0.2, Math.min(1.2, v)); markDirty(); if(state.mode==='stitch')recompile(); commitSoon(); }));
+  row(host, "Pull comp (mm)", numInput(obj.params.pull ?? 0.2, 0.1, 0, (v) => { obj.params.pull = Math.max(0, Math.min(1, v)); markDirty(); if(state.mode==='stitch')recompile(); commitSoon(); }));
   const u = document.createElement("label"); u.className = "check";
   const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = obj.params.underlay !== false;
-  cb.onchange = () => { obj.params.underlay = cb.checked; markDirty(); commit(); };
+  cb.onchange = () => { obj.params.underlay = cb.checked; markDirty(); if(state.mode==='stitch')recompile(); commit(); };
   u.append(cb, document.createTextNode(" Underlay (center run)"));
   rowFull(host, "", u);
   const hint = document.createElement("div"); hint.className = "prop-hint";
-  hint.textContent = "A real satin column: zig-zag rails across the line you drew.";
+  hint.textContent = obj.kind==='satin-rails' ? 'Paired rails control width and direction. Cycle spacing creates two crossing stitches. Use Assistant control to edit matching rail nodes in millimeters.' : 'A satin column: zig-zag rails across the line you drew.';
   host.appendChild(hint);
   buildColorRow(host, obj);
 }
@@ -1619,6 +1629,8 @@ function refreshStitchSettings() {
   // while the displayed values come from the primary selection.
   const objs = selectedObjects().length ? selectedObjects() : [obj];
   const p = obj.params;
+  if (obj.type === "running") { buildRunningProps(host, obj); return; }
+  if (obj.type === "satin") { buildSatinProps(host, obj); return; }
   const setAll = (k, v) => objs.forEach((o) => { o.params[k] = v; });
   const recompileLive = () => { markDirty(); recompile(); needsRender = true; };
 
@@ -1652,7 +1664,23 @@ function refreshStitchSettings() {
   }
   host.appendChild(tex);
 
-  row(host, "Density (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { setAll("spacing", v); recompileLive(); }));
+  const satinPreset = document.createElement("button"); satinPreset.className = "btn";
+  satinPreset.textContent = "Smooth satin lettering";
+  satinPreset.title = "Apply 0.4 mm satin cycle spacing, center underlay and automatic wide-area fill";
+  satinPreset.onclick = () => {
+    objs.filter(o=>o.type==='text'||o.type==='fill').forEach(o=>Object.assign(o.params,
+      {satinZigzag:true,spacing:0.4,underlay:true,stitchType:'auto',crosshatch:false,inset:0.1}));
+    recompileLive(); commit(); refreshStitchSettings();
+  };
+  host.appendChild(satinPreset);
+  const smooth = document.createElement("input"); smooth.type = "checkbox"; smooth.checked = !!p.satinZigzag;
+  smooth.onchange = () => { setAll("satinZigzag", smooth.checked); recompileLive(); commit(); };
+  row(host, "Smooth satin zigzag", smooth);
+  const satinHint = document.createElement("p"); satinHint.className = "prop-hint";
+  satinHint.textContent = "Smooth satin: spacing is one full zigzag cycle (two crossing stitches). Smaller spacing adds coverage. Wide areas still use fill in Auto. Inspect counters and corners in 3D; test on scrap.";
+  host.appendChild(satinHint);
+
+  row(host, "Row spacing (mm)", numInput(p.spacing ?? 0.4, 0.05, 0.25, (v) => { setAll("spacing", v); recompileLive(); }));
   row(host, "Stitch length (mm)", numInput(p.stitchLength ?? 3.0, 0.1, 1, (v) => { setAll("stitchLength", v); recompileLive(); }));
   row(host, "Fill angle (°)", numInput(p.angle ?? 0, 5, -180, (v) => { setAll("angle", v); recompileLive(); }));
   if (cur === "auto") {
@@ -1794,25 +1822,26 @@ $("sim-speed").oninput = (e) => { sim.speed = parseInt(e.target.value, 10); };
 // ----------------------------------------------------------------- top bar
 $("btn-render").onclick = () => renderStitches();
 $("btn-back").onclick = () => setMode("design");
-$("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" : "light"; document.body.dataset.theme = state.theme; needsRender = true; };
+$("btn-theme").onclick = () => { state.theme = state.theme === "light" ? "dark" : "light"; document.body.dataset.theme = state.theme; needsRender = true; autosave(); };
 $("btn-undo").onclick = undo;
 $("btn-redo").onclick = redo;
 $("btn-optimize").onclick = optimizeOrder;
 $("btn-select-all").onclick = selectAllObjects;
 
 $("btn-new").onclick = () => {
+  commit();
   if (!confirm("Start a new design? Unsaved work will be lost.")) return;
-  state.objects = []; setSel([]); state.image = null;
+  state.objects = []; state.guides = []; state.name = "My design"; syncProjectUI(); setSel([]); state.image = null;
   markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
-  resetHistory();
-  toast("New design");
+  commit();
+  toast("New design — Undo restores your previous work");
 };
 $("btn-reset").onclick = () => {
   if (state.objects.length && !confirm("Replace your current design with the sample heart + GoodSew design?")) return;
   state.objects = []; state.guides = []; setSel([]); state.image = null;
   seedDemo();
   markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
-  resetHistory(); needsRender = true;
+  commit(); needsRender = true;
   toast("Reset to the sample design");
 };
 $("draw-finish").onclick = () => finishDrawing();
@@ -1823,20 +1852,22 @@ $("file-svg").onchange = (e) => {
   e.target.value = "";
 };
 
-$("btn-save-json").onclick = () => { download(serialize(), "design.gsew", "application/json"); toast("Project saved"); };
+$("btn-save-json").onclick = () => { download(serialize(), fileStem(state.name) + ".gsew", "application/json"); toast("Project saved"); };
 $("btn-load-json").onclick = () => $("file-json").click();
 $("file-json").onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   const reader = new FileReader();
   reader.onload = () => {
     try {
+      commit();
       deserialize(reader.result);
+      syncProjectUI();
       document.body.dataset.theme = state.theme;
       state.objects.forEach((o) => { if (o.type === "text") bakeText(o); else rebuildShape(o); });
       setMode("design");
       refreshObjectList(); refreshProps(); updateEmptyHint();
       cam.fit(getHoop(state.hoopId), canvas.clientWidth, canvas.clientHeight, RULER, view.showHoop ? 17 : 2);
-      resetHistory();
+      commit();
       toast("Project loaded");
     } catch (err) { toast("Could not load file: " + err.message, true); }
   };
@@ -1892,58 +1923,60 @@ $("btn-preview").onclick = openPreview;
 
 // ----------------------------------------------------------------- 3D view
 // three.js loads lazily on first open, so the main app stays light.
-$("btn-3d").onclick = async () => {
-  ensureCompiled();
-  const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing to view — render first.", true); return; }
-  $("view3d-modal").classList.remove("hidden");
-  toast("Building 3D threads…");
+let viewerRequest = 0, pesFileRequest = 0;
+async function showThreadViewer(plan, title) {
+  const ticket=++viewerRequest,modal=$("view3d-modal");
+  $("view3d-title").textContent=title || "3D embroidery preview";
+  const stitches=plan.plan.filter(s=>s.cmd==="stitch").length;
+  const fits=plan.bounds.w<=100&&plan.bounds.h<=100&&stitches<=100000;
+  $("view3d-summary").textContent=`${plan.bounds.w.toFixed(1)} × ${plan.bounds.h.toFixed(1)} mm · ${stitches.toLocaleString()} stitches · ${plan.colors.length} thread blocks · ${fits ? "Within SE700 limits" : "Exceeds SE700 limits"}`;
+  $("view3d-file-notes").textContent=(plan.metadata?.warnings || []).join(" ") || "Geometry follows the stitch plan. Thread surface and fabric response are estimates.";
+  modal.classList.remove("hidden");if(!modal.open)modal.showModal();
+  $("view3d-stage").textContent="Building thread surfaces…";
   try {
-    const mod = await import("./view3d.js");
-    mod.open3DView(compiled, getHoop(state.hoopId), {
-      container: $("view3d-stage"),
-      play: $("view3d-play"),
-      scrub: $("view3d-scrub"),
-      speed: $("view3d-speed"),
-      counter: $("view3d-counter"),
-      views: $("view3d-views"),
-    });
-    window.__gs3d = true;
-  } catch (err) {
-    $("view3d-modal").classList.add("hidden");
-    toast("3D view failed: " + err.message, true);
+    const mod=await import("./view3d.js");if(ticket!==viewerRequest)return;
+    mod.open3DView(plan,getHoop(state.hoopId),{
+      container:$("view3d-stage"),play:$("view3d-play"),scrub:$("view3d-scrub"),speed:$("view3d-speed"),counter:$("view3d-counter"),views:$("view3d-views"),
+      controls:$("view3d-controls"),threads:$("view3d-threads"),reset:$("view3d-reset-material"),snapshot:$("view3d-snapshot")
+    });window.__gs3d=true;
+  } catch(err) {
+    if(ticket!==viewerRequest)return;
+    $("view3d-stage").textContent="3D preview could not start. " + err.message + " This viewer requires WebGL 2; try a browser with hardware acceleration enabled.";
+    toast("3D preview could not start: " + err.message,true);
   }
-};
-$("view3d-close").onclick = async () => {
-  $("view3d-modal").classList.add("hidden");
-  try { (await import("./view3d.js")).close3DView(); } catch { /* not loaded */ }
+}
+$("btn-3d").onclick=()=>{ensureCompiled();if(!compiled.plan.length){toast("Generate stitches first.",true);return;}showThreadViewer(compiled,state.name);};
+function closeThreadViewer(){
+  ++viewerRequest;++pesFileRequest;$("view3d-modal").close();$("view3d-modal").classList.add("hidden");
+  import("./view3d.js").then(mod=>{if(!$("view3d-modal").open)mod.close3DView();}).catch(()=>{});
+}
+$("view3d-close").onclick=closeThreadViewer;
+$("view3d-modal").addEventListener("cancel",e=>{e.preventDefault();closeThreadViewer();});
+$("btn-preview-pes").onclick=()=>$("file-pes").click();
+$("view3d-load").onclick=()=>$("file-pes").click();
+$("file-pes").onchange=async e=>{
+  const file=e.target.files[0];e.target.value="";if(!file)return;const request=++pesFileRequest;
+  try {
+    if(file.size>16*1024*1024)throw new Error("Choose a PES file smaller than 16 MB.");
+    const {parsePES}=await import("./import/pes.js");const plan=parsePES(await file.arrayBuffer(),file.name);
+    if(request===pesFileRequest)await showThreadViewer(plan,file.name);
+  } catch(err){toast("Could not open embroidery file: " + err.message,true);}
 };
 $("preview-close").onclick = () => $("preview-modal").classList.add("hidden");
 $("preview-modal").addEventListener("click", (e) => { if (e.target.id === "preview-modal") e.currentTarget.classList.add("hidden"); });
 $("custom-w").oninput = drawPreview;
 $("custom-h").oninput = drawPreview;
 
-$("btn-export-pes").onclick = () => {
-  ensureCompiled();
-  const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing to export — render first.", true); return; }
-  const hoop = getHoop(state.hoopId);
-  if (st.width > hoop.w + 0.5 || st.height > hoop.h + 0.5) {
-    if (!confirm(`Design (${st.width.toFixed(0)}×${st.height.toFixed(0)} mm) exceeds the ${hoop.name} field. Export anyway?`)) return;
-  }
-  const bytes = exportPES(compiled, "GoodSew");
-  download(bytes, "design.pes", "application/octet-stream");
-  toast(`Exported design.pes — ${st.stitches.toLocaleString()} stitches, ${st.threadColors} colors`);
-};
-
-$("btn-export-dst").onclick = () => {
-  ensureCompiled();
-  const st = computeStats(compiled);
-  if (st.stitches === 0) { toast("Nothing to export — render first.", true); return; }
-  const bytes = exportDST(compiled);
-  download(bytes, "design.dst", "application/octet-stream");
-  toast(`Exported design.dst — ${st.stitches.toLocaleString()} stitches (Tajima, universal)`);
-};
+function exportDesign(format) {
+  try {
+    ensureCompiled();
+    const bytes = format === "pes" ? exportPES(compiled, fileStem(state.name)) : exportDST(compiled);
+    download(bytes, `${fileStem(state.name)}.${format}`, "application/octet-stream");
+    toast(format === "pes" ? "PES downloaded. Use the sewing sheet for spool order and transfer steps." : "DST downloaded. DST does not store thread colors; keep the sewing sheet.");
+  } catch (err) { toast(err.message, true); refreshQuality(); }
+}
+$("btn-export-pes").onclick = () => exportDesign("pes");
+$("btn-export-dst").onclick = () => exportDesign("dst");
 
 // ----------------------------------------------------------------- helpers
 function download(data, filename, mime) {
@@ -1973,8 +2006,11 @@ function updateSimColor(s) {
 
 // ----------------------------------------------------------------- main loop
 function frame() {
+  if (state.mode === "stitch" && state.planDirty) needsRender = true;
   if (needsRender) {
-    if (state.mode === "stitch") ensureCompiled();
+    if (state.mode === "stitch") {
+      try { ensureCompiled(); } catch (err) { state.mode="design";document.body.dataset.mode="design";toast(err.message,true); }
+    }
     render(ctx, state, compiled, sim, { cam, view, cursor, hoverGuide, snapGuides, drawing, unit: UNITS[state.units] });
     needsRender = false;
   }
@@ -1994,7 +2030,7 @@ function boot() {
   console.log(`GoodSew v${APP_VERSION} — JS bundle active`);
   const badge = $("version-badge"); if (badge) badge.textContent = `GoodSew v${APP_VERSION}`;
   injectFontFaces();
-  restoreAutosaved(); // seedDemo below is a no-op if this restored anything
+  const restored = restoreAutosaved();
   document.body.dataset.theme = state.theme;
   document.body.dataset.mode = state.mode;
   buildThreadPicker();
@@ -2003,7 +2039,8 @@ function boot() {
   updateHoopDims();
   setTool("select");
   resize();
-  seedDemo();
+  if (!restored) seedDemo();
+  syncProjectUI();
   refreshObjectList();
   refreshProps();
   updateEmptyHint();
@@ -2011,7 +2048,7 @@ function boot() {
   frame();
 
   window.__gs = {
-    state, sim, setTool, setMode, renderStitches, undo, redo, reorder,
+    state, sim, fitToHoop, addBasting, applyFabric, setTool, setMode, renderStitches, undo, redo, reorder,
     setActiveColor: (hex) => { state.activeColor = hex; updateActiveSwatch(); },
     addText, addShape, bakeText, importSVG, importRasterData, importRasterImage, optimizeOrder, moveLayer, selectAllObjects,
     quality: () => { ensureCompiled(); return analyzeQuality(compiled, getHoop(state.hoopId)); },
@@ -2040,4 +2077,137 @@ function seedDemo() {
   markDirty();
 }
 
+// ---------------------------------------------------------- sewing workspace
+function syncProjectUI() {
+  $("project-name").value = state.name;
+  $("fabric-select").value = state.fabric;
+  $("fabric-note").textContent = FABRICS[state.fabric].note;
+}
+function refreshSewing() {
+  const badge = $("design-status"); if (!badge) return;
+  const visible = state.objects.filter(o => o.visible);
+  if (!visible.length) badge.textContent = "Your hoop is ready";
+  else if (state.planDirty || !compiled) badge.textContent = `${visible.length} objects · Generate to check stitches`;
+  else {
+    const st = computeStats(compiled), qa = analyzeQuality(compiled);
+    badge.textContent = `${st.stitches.toLocaleString()} stitches · ${st.width.toFixed(1)} × ${st.height.toFixed(1)} mm · ${qa.valid ? "Checks passed" : "Needs attention"}`;
+  }
+  badge.classList.toggle("attention", !!compiled && !state.planDirty && !analyzeQuality(compiled).valid);
+  const host = $("thread-sequence"); host.replaceChildren();
+  if (!compiled || state.planDirty) { host.textContent = "Generate stitches to see the spool order."; return; }
+  compiled.colors.forEach((color, i) => {
+    const button = document.createElement("button"); button.className = "sequence-step";
+    const dot = document.createElement("span"); dot.className = "sequence-dot"; dot.style.background = color.color;
+    const label = document.createElement("span"); label.textContent = `${i+1}. ${threadLabel(color.color)}`;
+    button.append(dot,label); button.title = "Preview this thread block in the simulator";
+    button.onclick = () => { sim.playing && sim.toggle(); const idx=compiled.plan.findIndex(s => s.color === i && s.cmd === "stitch"); sim.seek(Math.max(0,idx+1)); needsRender=true; };
+    host.append(button);
+  });
+}
+function applyFabric() {
+  const f = FABRICS[state.fabric];
+  const objects = selectedObjects().length ? selectedObjects() : state.objects;
+  for (const o of objects) {
+    if (o.type === "running") continue;
+    Object.assign(o.params, { spacing:f.spacing, density:f.spacing, stitchLength:f.stitchLength, pull:f.pull, underlay:true });
+  }
+  markDirty(); if(state.mode === "stitch") recompile(); commit(); refreshProps(); refreshSewing(); needsRender=true;
+  toast(`${f.label} starting settings applied to ${objects.filter(o=>o.type!=='running').length} objects. Test on scrap.`);
+}
+async function fitToHoop() {
+  try {
+    await Promise.all(state.objects.filter(o=>o.type==='text').map(async o=>{await loadFont(o.params.font);bakeText(o);}));
+    markDirty(); ensureCompiled();
+    if (!compiled.plan.length) { toast("Add artwork first.",true); return; }
+    // Recalculate stitches after each scaling pass, including non-scaling pull
+    // compensation, so fitting is based on the actual needle envelope.
+    for(let pass=0;pass<4;pass++) {
+      const b=compiled.bounds, cx=(b.minX+b.maxX)/2, cy=(b.minY+b.maxY)/2;
+      const factor=Math.min(1,95.8/Math.max(b.w,0.01),95.8/Math.max(b.h,0.01));
+      const map=p=>({x:50+(p.x-cx)*factor,y:50+(p.y-cy)*factor});
+      for(const o of state.objects.filter(o=>o.visible)) {
+        o.points=o.points.map(map);
+        if(o.box) { const q=map(o.box); o.box={x:q.x,y:q.y,w:o.box.w*factor,h:o.box.h*factor}; }
+        if(o.type==='text') {o.params.size*=factor;o.params.letterSpacing=(o.params.letterSpacing||0)*factor;bakeText(o);}
+        else if(o.box) rebuildShape(o);
+        else if(o.contours) o.contours=o.contours.map(c=>c.map(map));
+        if(o.type==='satin'&&o.kind!=='satin-rails') o.params.width*=factor;
+      }
+      markDirty(); recompile();
+      if(compiled.bounds.w<=96 && compiled.bounds.h<=96) break;
+    }
+    commit(); refreshProps(); refreshObjectList(); needsRender=true;
+    toast("Centered and fitted with a 2 mm hoop margin. Stitches regenerated.");
+  } catch(err) {toast("Could not fit design: " + err.message,true);}
+}
+function addBasting() {
+  ensureCompiled();
+  if(!compiled.plan.length) {toast("Add artwork first.",true);return;}
+  if(state.objects.some(o=>o.name==='Basting frame')) {toast("A basting frame is already present.");return;}
+  const b=compiled.bounds, x=b.minX-2,y=b.minY-2,r=b.maxX+2,d=b.maxY+2;
+  if(x<1||y<1||r>99||d>99) {toast("Leave room for basting: reduce and center the design before adding a frame.",true);return;}
+  const o=makeObject('running',[{x,y},{x:r,y},{x:r,y:d},{x,y:d},{x,y}],state.objects.find(o=>o.visible)?.color||state.activeColor);
+  o.name='Basting frame'; o.params.stitchLength=4; state.objects.unshift(o);setSel([o.id]);markDirty();
+  if(state.mode==='stitch')recompile();commit();refreshObjectList();refreshProps();needsRender=true;
+  toast("Basting frame added as the first layer. Remove its thread after sewing.");
+}
+$("project-name").oninput = e => {state.name=e.target.value.slice(0,80);commitSoon();};
+$("fabric-select").onchange = e => {state.fabric=e.target.value;syncProjectUI();commit();};
+$("btn-fabric").onclick=applyFabric;
+$("btn-fit-hoop").onclick=fitToHoop;
+$("btn-baste").onclick=addBasting;
+$("btn-sew-sheet").onclick=()=>{ensureCompiled();if(!compiled.plan.length){toast("Generate stitches first.",true);return;}download(buildSewSheet(compiled,state.name,state.fabric),fileStem(state.name)+'-sewing-sheet.html','text/html');};
+$("btn-fit-view").onclick=()=>{cam.fit(getHoop(state.hoopId),canvas.clientWidth,canvas.clientHeight,RULER,view.showHoop?17:2);needsRender=true;};
+$("btn-zoom-in").onclick=()=>{cam.zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,1.2);needsRender=true;};
+$("btn-zoom-out").onclick=()=>{cam.zoomAt(canvas.clientWidth/2,canvas.clientHeight/2,1/1.2);needsRender=true;};
+$("btn-help").onclick=()=>$("help-dialog").showModal();
+$("help-close").onclick=()=>$("help-dialog").close();
+
 boot();
+
+// Both MCP and visible browser commands use this authority. No arbitrary code.
+async function prepareCommandObjects(objects){
+ await Promise.all(objects.filter(o=>o.type==='text').map(o=>loadFont(o.params.font)));
+ for(const o of objects){if(o.type==='text')bakeText(o);else rebuildShape(o);}
+}
+async function commandCompile(){
+ await prepareCommandObjects(state.objects);markDirty();recompile();
+ return {stats:computeStats(compiled),warnings:analyzeQuality(compiled),bounds:compiled.bounds,colors:compiled.colors};
+}
+const designCommand=createDesignController({
+ fingerprint:historySnapshot,objects:()=>state.objects,nextId,
+ read:()=>({name:state.name,machine:SE700,selectedIds:[...state.selectedIds],objects:state.objects.map(o=>({id:o.id,type:o.type,kind:o.kind,name:o.name,color:o.color,box:o.box,points:o.points,rails:o._rails,rotation:o.rotation,params:{...o.params},visible:o.visible,groupId:o.groupId}))}),
+ prepare:async objects=>{await prepareCommandObjects(objects);compile(objects);},
+ apply:objects=>{commit();state.objects=objects;setSel(state.selectedIds.filter(id=>objects.some(o=>o.id===id)));markDirty();commit();refreshObjectList();refreshProps();updateEmptyHint();if(state.mode==='stitch')recompile();needsRender=true;},
+ undo,
+ generate_stitches:commandCompile,
+ preview_3d:async(args)=>{if(args.focus&&(![args.focus.x,args.focus.y,args.focus.w,args.focus.h].every(Number.isFinite)||args.focus.w<=0||args.focus.h<=0||args.focus.w>200||args.focus.h>200))throw Error('Preview region must have positive dimensions up to 200 mm.');const result=await commandCompile();await showThreadViewer(compiled,state.name);const {capture3DView}=await import('./view3d.js');return {...result,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',camera:args.focus?{focus:args.focus,view:args.view||'top'}:'initial fit',physicalSimulation:false}};},
+ inspect_region:async({x,y,w,h})=>{
+  if(w<=0||h<=0||w>200||h>200)throw Error('Use a positive inspection rectangle up to 200 mm.');
+  await commandCompile();const {prepareThreadSegments}=await import('./thread-model.js');const spans=prepareThreadSegments(compiled).segments;
+  const selected=spans.filter(s=>Math.max(s.a.x,s.b.x)>=x&&Math.min(s.a.x,s.b.x)<=x+w&&Math.max(s.a.y,s.b.y)>=y&&Math.min(s.a.y,s.b.y)<=y+h);
+  let needles=0;for(const s of compiled.plan)if(s.cmd==='stitch'&&s.x>=x&&s.x<=x+w&&s.y>=y&&s.y<=y+h)needles++;
+  return {region:{x,y,w,h},intersectingSegmentBounds:selected.length,needlePoints:needles,needlePointsPerSquareMM:needles/(w*h),note:'Bounding-box span intersection and needle density estimates; not a fabric coverage simulation.'};
+ },
+ export_pes:async()=>{
+  const result=await commandCompile(),bytes=exportPES(compiled),{parsePES}=await import('./import/pes.js'),decoded=parsePES(bytes,'verification.pes');
+  const a=compiled.plan.filter(s=>s.cmd==='stitch'),b=decoded.plan.filter(s=>s.cmd==='stitch');
+  if(a.length!==b.length)throw Error('PES verification failed: stitch count mismatch.');
+  const dx=b[0].x-a[0].x,dy=b[0].y-a[0].y;
+  let error=0;for(let i=0;i<a.length;i++)error=Math.max(error,Math.abs(b[i].x-a[i].x-dx),Math.abs(b[i].y-a[i].y-dy));
+  if(error>.101)throw Error('PES verification failed: coordinate mismatch.');
+  let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.slice(i,i+8192));
+  return {...result,filename:fileStem(state.name)+'.pes',base64:btoa(binary),verification:{stitchCount:a.length,maxCoordinateErrorMM:error,reader:'Good Sew PEC reader; independent reader tests also shipped'}};
+ }
+});
+mountAssistantPanel(designCommand);
+async function replaceWithSatinRound(obj){
+ try{
+  const before=await designCommand('get_design'),b=getObjBox(obj),text=obj.params.text;
+  const height=Math.max(6,Math.min(20,b.h));
+  const operations=[{op:'remove',id:obj.id},{op:'add_lettering',text,height,strokeWidth:Math.max(.8,Math.min(1.6,height*.12)),x:b.cx-b.w/2,y:b.cy-b.h/2,letterSpacing:1,color:obj.color}];
+  const result=await designCommand('apply_edit',{expectedRevision:before.revision,requestId:crypto.randomUUID(),operations});
+  setSel(state.objects.filter(o=>o.kind==='satin-rails').map(o=>o.id));refreshProps();refreshObjectList();
+  toast('Converted to editable Satin Round columns.'+(result.notes.length?' '+result.notes.join(' '):'')+' Undo restores the original font.');
+ }catch(err){toast(err.message,true);}
+}

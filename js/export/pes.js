@@ -1,3 +1,5 @@
+import { assertExportable } from "../qa.js";
+
 // Brother PES v1 + PEC writer. Byte-accurate per pyembroidery's format.
 // See docs/pes-format-notes.md. Units: 0.1 mm, Y down. Long-form deltas BIG-endian.
 
@@ -134,6 +136,7 @@ function drawScaled(g, pts, bounds, buffer = 5) {
 // Build the entire PES file from a compiled plan.
 // compiled: { plan, colors, bounds }   name: design name string.
 export function exportPES(compiled, name = "GoodSew") {
+  assertExportable(compiled);
   const { plan, colors, bounds } = compiled;
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;
@@ -163,7 +166,7 @@ export function exportPES(compiled, name = "GoodSew") {
 
   // --- PEC header ---
   const pecStart = w.length;
-  const shortName = name.substring(0, 8);
+  const shortName = name.replace(/[^A-Za-z0-9_-]/g, "_").substring(0, 8);
   const laLine = "LA:" + shortName.padEnd(16, " ");
   w.ascii(laLine).u8(0x0d);        // 20 bytes
   w.pad(0x20, 12).u8(0xff).u8(0x00); // 14 bytes

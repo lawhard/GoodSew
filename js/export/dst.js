@@ -1,3 +1,5 @@
+import { assertExportable } from "../qa.js";
+
 // Tajima DST writer. DST is the universal embroidery format read by almost every
 // machine and digitizer. 512-byte ASCII header + 3-byte stitch records.
 //
@@ -72,6 +74,7 @@ function headerLine(records, colorChanges, ext) {
 
 // Build a DST file from a compiled plan. compiled: { plan, colors, bounds }.
 export function exportDST(compiled) {
+  assertExportable(compiled);
   const { plan, bounds } = compiled;
   const cx = (bounds.minX + bounds.maxX) / 2;
   const cy = (bounds.minY + bounds.maxY) / 2;

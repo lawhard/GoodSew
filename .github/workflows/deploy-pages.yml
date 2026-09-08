@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-      - claude/se700-embroidery-digitizer-64vu3y
   workflow_dispatch:
 
 permissions:
@@ -28,12 +27,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: 'dist'
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

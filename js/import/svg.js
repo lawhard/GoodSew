@@ -29,20 +29,36 @@ function parseColor(str) {
 //   base    = contours normalized to [0,1] within the combined bbox (y-down)
 //   box     = target placement in mm, fitted ~80% into the hoop and centered
 // `hoop` = { w, h } in mm.
-export function parseSVG(text, hoop) {
+export function parseSVG(text, hoop, opts = {}) {
+  if (text.length > 5000000) throw new Error("SVG is too large (5 MB maximum).");
   const doc = new DOMParser().parseFromString(text, "image/svg+xml");
   if (doc.querySelector("parsererror")) throw new Error("invalid SVG");
   const svg = doc.querySelector("svg");
   if (!svg) throw new Error("no <svg> element");
 
+  if (svg.querySelector("text,use,image,clipPath,mask,filter")) throw new Error("This SVG uses text, references, embedded images, or effects. Convert text to paths and flatten effects, or import a PNG instead.");
+  // Never attach executable or foreign content from imported artwork.
+  const allowed = new Set(["svg","g","path","rect","circle","ellipse","polygon","polyline","line","defs","linearGradient","radialGradient","stop","style","title","desc"]);
+  for (const el of [...svg.querySelectorAll("*")]) {
+    if (!allowed.has(el.localName)) { el.remove(); continue; }
+  }
+  for (const el of [svg, ...svg.querySelectorAll("*")]) {
+    for (const a of [...el.attributes]) {
+      if (/^on/i.test(a.name) || /href/i.test(a.name) || /(?:javascript:|https?:|data:|@import|url\(\s*["']?(?!#))/i.test(a.value)) el.removeAttribute(a.name);
+    }
+    if (el.localName === "style") el.textContent = el.textContent.replace(/@import[^;]+;?/gi, "").replace(/url\([^)]*\)/gi, "none");
+  }
+  if (svg.querySelectorAll("*").length > 5000) throw new Error("SVG has too many elements.");
+
   // Attach offscreen so the geometry APIs are reliable across browsers.
   const holder = document.createElement("div");
-  holder.style.cssText = "position:absolute;left:-99999px;top:0;width:0;height:0;overflow:hidden";
-  holder.appendChild(svg);
+  holder.style.cssText = "position:absolute;left:-99999px;top:0;width:1000px;height:1000px;overflow:hidden";
+  // Shadow scope keeps artwork CSS from changing the editor itself.
+  holder.attachShadow({mode:"open"}).appendChild(svg);
   document.body.appendChild(holder);
   try {
     const els = [];
-    const walk = (n) => { for (const c of n.children || []) { if (typeof c.getTotalLength === "function" && typeof c.getPointAtLength === "function") els.push(c); walk(c); } };
+    const walk = (n) => { for (const c of n.children || []) { if (["defs","clipPath","mask","symbol"].includes(c.localName)) continue; if (typeof c.getTotalLength === "function" && typeof c.getPointAtLength === "function") els.push(c); walk(c); } };
     walk(svg);
 
     // Resolve an element's paint the way the browser actually renders it:
@@ -68,6 +84,7 @@ export function parseSVG(text, hoop) {
       return col ? { kind: "color", value: col } : { kind: "none" };
     };
     const isHidden = (el) => {
+      for(let parent=el.parentElement;parent && parent!==svg;parent=parent.parentElement) { const c=getComputedStyle(parent);if(c.display==="none"||parseFloat(c.opacity)<0.05)return true; }
       const cs = getComputedStyle(el);
       return cs.display === "none" || cs.visibility === "hidden" ||
         parseFloat(cs.opacity || "1") < 0.05;
@@ -80,26 +97,23 @@ export function parseSVG(text, hoop) {
       let len = 0;
       try { len = el.getTotalLength(); } catch { continue; }
       if (!len || !isFinite(len)) continue;
-      const step = Math.max(0.4, len / 800);
-      const breakDist = step * 6; // a jump this big = a new sub-path/hole
-      // getPointAtLength returns the element's LOCAL coords and ignores ancestor
-      // <g transform> / the element's own transform — which is why transformed
-      // logos came in flipped/scattered. Map every sample through the element's
-      // CTM (to the <svg> viewport) so positions/orientation are correct.
-      const ctm = (typeof el.getCTM === "function") ? el.getCTM() : null;
+      const ctm = el.getCTM?.();
       const contours = [];
-      let cur = [], prev = null;
-      for (let s = 0; s <= len; s += step) {
-        let pt = el.getPointAtLength(s);
-        if (ctm && pt.matrixTransform) pt = pt.matrixTransform(ctm);
-        const p = { x: pt.x, y: pt.y };
-        if (prev && Math.hypot(p.x - prev.x, p.y - prev.y) > breakDist) {
-          if (cur.length >= 3) contours.push(cur);
-          cur = [];
+      // Sample each moveto-defined subpath independently. Distance heuristics
+      // join nearby counters and break long scaled edges in real logos.
+      const parts = el.localName === "path" ? splitSubpaths(el, svg) : [el];
+      for (const part of parts) {
+        const length = part.getTotalLength();
+        if (!Number.isFinite(length) || length <= 0) continue;
+        const n = Math.min(1600, Math.max(2, Math.ceil(length / 0.4)));
+        const cur = [];
+        for (let i=0;i<=n;i++) {
+          let pt=part.getPointAtLength(length*i/n);
+          if (ctm && pt.matrixTransform) pt=pt.matrixTransform(ctm);
+          cur.push({x:pt.x,y:pt.y});
         }
-        cur.push(p); prev = p;
+        if (cur.length>=2) contours.push(cur);
       }
-      if (cur.length >= 3) contours.push(cur);
       if (!contours.length) continue;
 
       const fill = resolvePaint(el, "fill");
@@ -114,7 +128,9 @@ export function parseSVG(text, hoop) {
         if (p.x < eMinX) eMinX = p.x; if (p.y < eMinY) eMinY = p.y;
         if (p.x > eMaxX) eMaxX = p.x; if (p.y > eMaxY) eMaxY = p.y;
       }
-      raw.push({ contours, color, outline, bbox: { x0: eMinX, y0: eMinY, x1: eMaxX, y1: eMaxY } });
+      const entry = { contours, color, outline, bbox: { x0: eMinX, y0: eMinY, x1: eMaxX, y1: eMaxY } };
+      if (outline) for (const c of contours) raw.push({ ...entry, contours:[c], running:Math.hypot(c[0].x-c.at(-1).x,c[0].y-c.at(-1).y)>0.001 });
+      else raw.push(entry);
       if (eMinX < minX) minX = eMinX; if (eMinY < minY) minY = eMinY;
       if (eMaxX > maxX) maxX = eMaxX; if (eMaxY > maxY) maxY = eMaxY;
     }
@@ -130,7 +146,7 @@ export function parseSVG(text, hoop) {
       return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.92;
     };
     let filtered = raw.filter((it, i) => {
-      if (it.outline || i > 1) return true; // backgrounds sit at the bottom of the stack
+      if (opts.removeBackground === false || it.outline || i > 1) return true; // backgrounds sit at the bottom of the stack
       const cov = ((it.bbox.x1 - it.bbox.x0) * (it.bbox.y1 - it.bbox.y0)) / (bw * bh);
       return !(cov > 0.94 && isLight(it.color));
     });
@@ -150,10 +166,31 @@ export function parseSVG(text, hoop) {
 
     const items = filtered.map((it) => ({
       base: it.contours.map((c) => c.map((p) => ({ x: (p.x - minX) / bw, y: (p.y - minY) / bh }))),
-      color: it.color, outline: it.outline,
+      color: it.color, outline: it.outline, running: it.running,
     }));
     return { items, box };
   } finally {
     holder.remove();
   }
+}
+
+// Resolve relative moveto commands against the previous subpath endpoint.
+function splitSubpaths(el, svg) {
+  const chunks=(el.getAttribute("d") || "").match(/[mM][^mM]*/g) || [];
+  let previous={x:0,y:0}; const parts=[];
+  for(let chunk of chunks) {
+    if(chunk[0]==="m") {
+      const m=chunk.slice(1).match(/^\s*([-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?)[\s,]*([-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?)/);
+      if(!m) continue;
+      let rest=chunk.slice(1+m[0].length);
+      if (/^[\s,]*[-+.\d]/.test(rest)) rest="l"+rest;
+      chunk=`M${previous.x+Number(m[1])},${previous.y+Number(m[2])} ${rest}`;
+    }
+    const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+    path.setAttribute("d",chunk);
+    // Geometry methods work for detached paths and inherit no paint/transform.
+    const len=path.getTotalLength(); previous=path.getPointAtLength(len);
+    parts.push(path);
+  }
+  return parts;
 }

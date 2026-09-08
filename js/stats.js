@@ -1,11 +1,10 @@
 // Statistics over a compiled plan: counts, dimensions, run-time estimate.
 
-// The Brother SE700 tops out at 710 spm. Sustained throughput is lower once
-// accel/decel and direction changes are included; we model an effective average
-// plus fixed penalties for color changes and trims (pauses / rethreading).
-const EFFECTIVE_SPM = 600;          // stitches per minute, sustained
-const COLOR_CHANGE_SECONDS = 18;    // pause + rethread allowance per change
-const TRIM_SECONDS = 1.2;           // automatic trim cycle
+// SE700 embroidery maximum is 400 spm (710 is sewing only). Estimates
+// use 350 effective spm and allow a minute to change a single-needle spool.
+const EFFECTIVE_SPM = 350;
+const COLOR_CHANGE_SECONDS = 60;
+const TRIM_SECONDS = 3; // planning allowance; jump threads may need manual cutting
 
 export function computeStats(compiled) {
   const { plan, bounds } = compiled;
@@ -38,8 +37,9 @@ export function computeStats(compiled) {
 
 export function formatTime(seconds) {
   if (!seconds || seconds < 1) return "—";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   if (m < 60) return `${m}m ${s.toString().padStart(2, "0")}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${(m % 60).toString().padStart(2, "0")}m`;

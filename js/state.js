@@ -1,3 +1,4 @@
+import {validateRails} from './satin.js';
 // Central application state + design data model.
 //
 // A Design is a list of vector "objects". Each object owns a simple editing
@@ -57,6 +58,8 @@ export function makeObject(type, points, color = "#1f3f7c") {
 }
 
 export const state = {
+  name: "My design",
+  fabric: "woven",
   hoopId: "se700",
   units: "in",           // 'in' (default) | 'mm' — display only; model is mm
   theme: "light",        // 'light' (default) | 'dark'
@@ -83,9 +86,9 @@ export function markDirty() {
 
 // Distinct ordered thread color list as used by the design (object order).
 // Consecutive objects of the same color share a color block (no thread change).
-export function colorBlocks() {
+export function colorBlocks(objects = state.objects) {
   const blocks = [];
-  for (const obj of state.objects) {
+  for (const obj of objects) {
     if (!obj.visible) continue;
     if (obj.type === "text") {
       if (!obj._glyphs || obj._glyphs.length === 0) continue;
@@ -109,14 +112,15 @@ function hexToArr(hex) {
 
 export function serialize() {
   return JSON.stringify({
-    version: 3,
+    version: 4,
+    name: state.name, fabric: state.fabric,
     hoopId: "se700",
     units: state.units,
     theme: state.theme,
     guides: state.guides,
     objects: state.objects.map((o) => ({
       type: o.type, name: o.name, color: o.color,
-      points: o.points, rotation: o.rotation || 0,
+      points: o.points, contours: o.contours, rotation: o.rotation || 0,
       kind: o.kind, box: o.box, groupId: o.groupId, base: o._base,
       params: o.params, visible: o.visible,
     })),
@@ -125,26 +129,63 @@ export function serialize() {
 
 export function deserialize(json) {
   const data = typeof json === "string" ? JSON.parse(json) : json;
-  state.hoopId = "se700"; // this build targets the SE700 only
+  validateProject(data);
+  // Validate everything before changing the current document.
+  state.name = typeof data.name === "string" ? data.name.slice(0, 80) : "My design";
+  state.fabric = ["woven", "knit", "towel"].includes(data.fabric) ? data.fabric : "woven";
+  state.hoopId = "se700";
   state.units = data.units === "mm" ? "mm" : "in";
   if (data.theme === "dark" || data.theme === "light") state.theme = data.theme;
   state.guides = data.guides || [];
   state.objects = (data.objects || []).map((o) => ({
     id: nextId(),
-    type: o.type === "text" ? "text" : "fill",
+    type: o.type,
     name: o.name || `${o.type} ${_id}`,
     color: o.color || "#1f3f7c",
     points: o.points || [],
+    contours: o.contours,
     rotation: o.rotation || 0,
     kind: o.kind,
     box: o.box,
-    groupId: o.groupId,
+    groupId: o.groupId == null ? undefined : `loaded-${o.groupId}`,
     _base: o.base,
-    params: { ...defaultParams(o.type === "text" ? "text" : "fill"), ...(o.params || {}) },
+    params: { ...defaultParams(o.type), ...(o.params || {}) },
     visible: o.visible !== false,
   }));
   state.selectedId = null;
   state.selectedIds = [];
   state.mode = "design";
   markDirty();
+}
+
+// Imported projects are data, never executable instructions. Bound complexity
+// and reject malformed geometry atomically so a failed Open preserves work.
+export function validateProject(data) {
+  if (!data || !Array.isArray(data.objects)) throw new Error("Expected a Good Sew project with an objects list.");
+  if (data.objects.length > 1000) throw new Error("Project exceeds 1,000 objects.");
+  if (data.version != null && (!Number.isInteger(data.version) || data.version > 4 || data.version < 1)) throw new Error("Unsupported project version.");
+  let points = 0;
+  const checkPoints = (ps) => {
+    if (!Array.isArray(ps)) throw new Error("Invalid point list.");
+    points += ps.length;
+    if (points > 200000) throw new Error("Project geometry is too complex.");
+    for (const pt of ps) if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y) || Math.abs(pt.x) > 10000 || Math.abs(pt.y) > 10000) throw new Error("Invalid coordinates.");
+  };
+  for (const o of data.objects) {
+    if (!o || !["fill", "text", "running", "satin"].includes(o.type)) throw new Error("Unknown object type.");
+    checkPoints(o.points || []);
+    for (const cs of [o.base, o.contours]) if (cs != null) { if (!Array.isArray(cs)) throw new Error("Invalid contours."); cs.forEach(checkPoints); }
+    if(o.kind === "satin-rails") { validateRails(o.base || o._base, 0.000001); if(!o.box)throw Error("Satin rails need a box."); }
+    if (o.box) for (const k of ["x", "y", "w", "h"]) if (!Number.isFinite(o.box[k]) || Math.abs(o.box[k]) > 10000 || ((k === "w" || k === "h") && o.box[k] < 0)) throw new Error("Invalid object size.");
+    if (o.rotation != null && !Number.isFinite(o.rotation)) throw new Error("Invalid rotation.");
+    if (o.color != null && !/^#[0-9a-f]{6}$/i.test(o.color)) throw new Error("Invalid thread color.");
+    if (o.params != null && (typeof o.params !== "object" || Array.isArray(o.params))) throw new Error("Invalid stitch settings.");
+    for (const [k,v] of Object.entries(o.params || {})) {
+      if (typeof v === "number" && (!Number.isFinite(v) || Math.abs(v) > 10000)) throw new Error("Invalid stitch setting: " + k);
+      if (["spacing", "density", "stitchLength", "size", "width", "borderWidth"].includes(k) && (!Number.isFinite(v) || v <= 0)) throw new Error("Stitch sizes must be positive.");
+      if (k === "repeats" && (!Number.isInteger(v) || v < 1 || v > 9)) throw new Error("Use 1–9 running-stitch passes.");
+      if (k === "text" && (typeof v !== "string" || v.length > 500)) throw new Error("Text is limited to 500 characters.");
+    }
+  }
+  if (data.guides != null && (!Array.isArray(data.guides) || data.guides.length > 500 || data.guides.some(g => !g || !["x","y"].includes(g.axis) || !Number.isFinite(g.pos)))) throw new Error("Invalid guides.");
 }
