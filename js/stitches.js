@@ -1,4 +1,5 @@
 import {generateRailColumn} from './satin.js';
+import {linkSubpaths} from './travel.js';
 import {sampleRunningPath} from './running.js';
 // Stitch generators. Each takes an object's geometry + params and returns an
 // array of needle penetration points {x,y} in mm — the raw stitch path for that
@@ -787,7 +788,7 @@ export function generateForObject(obj, occluders = []) {
       // the interior. Hole-aware — each contour (counter included) is bordered
       // independently, so an outline 'O' gets two rings and an open center.
       if (obj.params.fillMode === "outline") return generateBorder(contours, obj.params);
-      return fillWithUnderlay(contours, obj.params, { occluders });
+      return linkSubpaths(fillWithUnderlay(contours, obj.params, { occluders }), contours, { occluders });
     }
     case "text":    return generateText(obj, occluders);
     default:        return [];

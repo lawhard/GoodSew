@@ -7,6 +7,8 @@ import {exportPES} from '../js/export/pes.js';import {parsePES} from '../js/impo
 import {operations} from '../js/samples/timi.js';
 import {operations as lineOps} from '../js/samples/timi-line.js';
 import {operations as brushOps} from '../js/samples/timi-brush.js';
+import {operations as threeOps} from '../js/samples/timi-three.js';
+import {generateForObject} from '../js/stitches.js';
 const len=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const wide=[[{x:10,y:10},{x:40,y:10}],[{x:10,y:40},{x:40,y:40}]];
 test('split satin sews a wide area with bounded, staggered stitches',()=>{
@@ -64,4 +66,20 @@ test('auto-traced brush portrait compiles: satin strokes plus solid eyes and nos
  assert.ok(qa.valid);assert.equal(compiled.colors.length,1);
  assert.ok(objects.filter(o=>o.kind==='satin-rails').length>80);assert.equal(objects.filter(o=>o.type==='fill').length,3);
  assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);assert.ok(qa.maxLen<=9,'longest stitch '+qa.maxLen);assert.ok(qa.peakNeedlesPer2mmCell<=60);
+});
+test('three-colour traced portrait: three thread stops, fills sewn without internal trims',()=>{
+ let id=0;const {objects}=prepareEdits([],threeOps,()=>++id),compiled=compile(objects),qa=analyzeQuality(compiled);
+ assert.ok(qa.valid);assert.equal(compiled.colors.length,3);assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);
+ assert.ok(qa.maxLen<=9,'longest stitch '+qa.maxLen);
+ const fills=objects.filter(o=>o.type==='fill');assert.ok(fills.length>=8);
+ // hidden travel links every section of a tufted fill: one tie-in, no trims inside
+ for(const o of fills)assert.ok(compile([o]).plan.filter(s=>s.cmd==='trim').length<=2,o.name+' sews as one run');
+ assert.ok(compiled.plan.filter(s=>s.cmd==='trim').length<90);
+});
+test('hidden travel stays inside the shape and out of its holes',()=>{
+ const outer=[{x:0,y:0},{x:40,y:0},{x:40,y:8},{x:8,y:8},{x:8,y:30},{x:40,y:30},{x:40,y:38},{x:0,y:38}]; // a "C": two arms joined by a spine
+ const subs=generateForObject({type:'fill',points:outer,contours:[outer],params:{spacing:.45,angle:0,stitchLength:3,underlay:true}});
+ const inside=p=>p.x>=-.01&&p.x<=40.01&&p.y>=-.01&&p.y<=38.01&&!(p.x>8.2&&p.y>8.2&&p.y<29.8);
+ for(const s of subs)for(const p of s)assert.ok(inside(p),'point in the C notch: '+JSON.stringify(p));
+ for(let i=1;i<subs.length;i++){const a=subs[i-1].at(-1),b=subs[i][0];assert.ok(Math.hypot(a.x-b.x,a.y-b.y)<=3.01&&!subs[i]._trimBefore,'sections are linked');}
 });
