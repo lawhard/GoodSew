@@ -11,6 +11,10 @@ The request mentioned “SC700.” The supplied app already targets SE700, and B
 - **Assistant commands**: `add_region` (freeform fills), `add_satin` from a spine and width, `smooth` control nodes, `preview_2d` (fast lit stitch picture), density `hotspots`, and a project **fabric colour** used by the workspace and both previews. In-page agents can call `window.goodsew.call(name, args)`.
 - **Samples → Timi the Yorkie**: a satin portrait built entirely from assistant commands (`js/samples/timi.js`). Open the app with `?sample=timi`, or replay it headlessly with `node scripts/assistant-run.mjs js/samples/timi.js out --3d --export`.
 
+## Line art to satin (0.15.0)
+
+`tools/trace_lineart.py art.png trace.json` turns black-on-white line art into assistant commands: every stroke becomes a satin column (skeleton centre line, measured width, tapered tips), solid shapes become fills that keep their highlights, and strokes are ordered nearest-neighbour to keep jumps short. `node scripts/import-trace.mjs trace.json js/samples/name.js` checks each command against the stitch compiler and writes a sample module. Needs Python with numpy, scipy, scikit-image and Pillow. The **Timi, brush portrait** sample was made this way from `docs/art/timi-brush-art.png`, which an image model drew from her photo with a prompt asking for bold, well-separated, even-weight strokes.
+
 ## Use the app
 
 1. Give your project a name. Add text, shapes, running or satin lines, or import a clean logo.

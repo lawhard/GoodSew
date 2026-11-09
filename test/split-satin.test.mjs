@@ -6,6 +6,7 @@ import {analyzeQuality} from '../js/qa.js';
 import {exportPES} from '../js/export/pes.js';import {parsePES} from '../js/import/pes.js';
 import {operations} from '../js/samples/timi.js';
 import {operations as lineOps} from '../js/samples/timi-line.js';
+import {operations as brushOps} from '../js/samples/timi-brush.js';
 const len=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const wide=[[{x:10,y:10},{x:40,y:10}],[{x:10,y:40},{x:40,y:40}]];
 test('split satin sews a wide area with bounded, staggered stitches',()=>{
@@ -57,4 +58,10 @@ test('Timi line portrait is one thread of sewable satin with open catchlights',(
  // the catchlights must stay unstitched: no needle point and no thread crosses them
  const st=compiled.plan.filter(s=>s.cmd==='stitch');
  for(const h of [{x0:34,x1:35.6,y0:45,y1:46},{x0:54.6,x1:56.5,y0:47.4,y1:48.4}])assert.ok(!st.some(s=>s.x>h.x0&&s.x<h.x1&&s.y>h.y0&&s.y<h.y1),'catchlight is bare cloth');
+});
+test('auto-traced brush portrait compiles: satin strokes plus solid eyes and nose',()=>{
+ let id=0;const {objects}=prepareEdits([],brushOps,()=>++id),compiled=compile(objects),qa=analyzeQuality(compiled);
+ assert.ok(qa.valid);assert.equal(compiled.colors.length,1);
+ assert.ok(objects.filter(o=>o.kind==='satin-rails').length>80);assert.equal(objects.filter(o=>o.type==='fill').length,3);
+ assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);assert.ok(qa.maxLen<=9,'longest stitch '+qa.maxLen);assert.ok(qa.peakNeedlesPer2mmCell<=60);
 });
