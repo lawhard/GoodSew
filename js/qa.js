@@ -42,7 +42,7 @@ export function analyzeQuality(compiled, hoop = SE700.field) {
   const dense = [...cells.values()].filter(n => n > 60).length;
   if (dense) add("warn", `${dense} areas exceed 60 needle points per 2 × 2 mm. This is a screening heuristic, not a fabric safety limit. Inspect layers and tight corners; purposeful satin can also reach this count.`);
   if (st.jumps > 1) add("info", `${st.jumps} travel moves. Jump threads may need manual cutting on the SE700; trim commands do not guarantee a cut.`);
-  return { warnings, short, long, maxLen, peakNeedlesPer2mmCell: [...cells.values()].reduce((peak,n)=>Math.max(peak,n),0), digitizingReview: compiled.digitizingReview || null, valid: !warnings.some(w => w.sev === "error") };
+  return { warnings, short, long, maxLen, peakNeedlesPer2mmCell: [...cells.values()].reduce((peak,n)=>Math.max(peak,n),0), hotspots: [...cells.entries()].sort((a,b)=>b[1]-a[1]).slice(0,5).map(([key,needles])=>{const [cx,cy]=key.split(',').map(Number);return {x:cx*2,y:cy*2,w:2,h:2,needles};}), digitizingReview: compiled.digitizingReview || null, valid: !warnings.some(w => w.sev === "error") };
 }
 
 export function assertExportable(compiled) {

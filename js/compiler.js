@@ -39,7 +39,8 @@ function occludersFor(obj, order = state.objects) {
 
 const MAX_STITCH_MM = 12.1;   // anything longer becomes a jump sequence
 const MAX_MOVE_MM = 204.0;    // PEC hard limit (2047 units * 0.1mm)
-const TRIM_GAP_MM = 3.0;      // gap between sub-paths that warrants a trim
+const TRIM_GAP_MM = 3.0;
+const OBJECT_JOIN_MM = 1.0; // objects whose ends nearly touch keep one unbroken thread      // gap between sub-paths that warrants a trim
 
 // Split a long move from a->b into intermediate points no longer than maxLen.
 function splitMove(a, b, maxLen) {
@@ -107,7 +108,7 @@ export function compile(objects = state.objects) {
           // Distinct OBJECTS always tie off + trim between them too (unless
           // they practically touch) — a straight stitched bridge between two
           // separate design elements crosses whatever lies between them.
-          if (atColorStart || gap > TRIM_GAP_MM || pts._trimBefore || (firstOfObj && gap > 0.1)) {
+          if (atColorStart || gap > TRIM_GAP_MM || pts._trimBefore || (firstOfObj && gap > OBJECT_JOIN_MM)) {
             // Disjoint sub-path: tie off, trim, jump across, restart.
             if (!atColorStart) {
               lockAt(prev, prev2, ci);

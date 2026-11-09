@@ -1,8 +1,15 @@
-# Good Sew Studio 0.11.0
+# Good Sew Studio 0.13.0
 
 A browser-based embroidery design workspace for the **Brother SE700**. This revision repairs GoodSew 0.8.1 while preserving its local-first, static-site architecture, font library, digitizing tools, simulation, product previews, and 3D view.
 
 The request mentioned “SC700.” The supplied app already targets SE700, and Brother's official SE700 manual confirms the profile used here. The physical model has not been confirmed by the owner. Do not assume compatibility with another model.
+
+## New in 0.13.0: satin that shines, and a worked AI example
+
+- **Split satin** (`params.split`): paired-rail satin can now cover areas of any width. Long throws are broken into staggered stitches, so thread direction and lustre are preserved without loose floats.
+- **Fur edges** (`params.featherA` / `featherB`), converging-fan short stitches, and edge + lattice underlay for wide columns.
+- **Assistant commands**: `add_region` (freeform fills), `add_satin` from a spine and width, `smooth` control nodes, `preview_2d` (fast lit stitch picture), density `hotspots`, and a project **fabric colour** used by the workspace and both previews. In-page agents can call `window.goodsew.call(name, args)`.
+- **Samples → Timmy the Yorkie**: a satin portrait built entirely from assistant commands (`js/samples/timmy.js`). Open the app with `?sample=timmy`, or replay it headlessly with `node scripts/assistant-run.mjs js/samples/timmy.js out --3d --export`.
 
 ## Use the app
 

@@ -60,6 +60,7 @@ export function makeObject(type, points, color = "#1f3f7c") {
 export const state = {
   name: "My design",
   fabric: "woven",
+  fabricColor: null,   // preview ground colour (null = default white field)
   hoopId: "se700",
   units: "in",           // 'in' (default) | 'mm' — display only; model is mm
   theme: "light",        // 'light' (default) | 'dark'
@@ -113,7 +114,7 @@ function hexToArr(hex) {
 export function serialize() {
   return JSON.stringify({
     version: 4,
-    name: state.name, fabric: state.fabric,
+    name: state.name, fabric: state.fabric, fabricColor: state.fabricColor || undefined,
     hoopId: "se700",
     units: state.units,
     theme: state.theme,
@@ -133,6 +134,7 @@ export function deserialize(json) {
   // Validate everything before changing the current document.
   state.name = typeof data.name === "string" ? data.name.slice(0, 80) : "My design";
   state.fabric = ["woven", "knit", "towel"].includes(data.fabric) ? data.fabric : "woven";
+  state.fabricColor = typeof data.fabricColor === "string" && /^#[0-9a-f]{6}$/i.test(data.fabricColor) ? data.fabricColor.toLowerCase() : null;
   state.hoopId = "se700";
   state.units = data.units === "mm" ? "mm" : "in";
   if (data.theme === "dark" || data.theme === "light") state.theme = data.theme;

@@ -1,4 +1,4 @@
-# Good Sew design control — 0.11.0
+# Good Sew design control — 0.13.0
 
 Implemented: local MCP stdio server, paired browser bridge, and visible Assistant control panel. No AI API key or paid model backend is required. The connected assistant plans edits; the deterministic stitch compiler generates and validates the result.
 
@@ -14,6 +14,7 @@ Open the browser at http://127.0.0.1:8137/. Choose Assistant control → Enable 
 |---|---|
 | get_design | Current revision, stable object IDs, geometry, rails, parameters, selection and supported shapes/fonts |
 | apply_edit | Atomic, precompiled batch: add satin, lettering, shapes, outline text or running lines; update, remove or reorder objects |
+| preview_2d | Fast top-down PNG of the actual stitches with directional thread lighting; optional focus, width and fabric colour |
 | generate_stitches | Actual compiler statistics, dimensions, thread order and quality warnings |
 | inspect_region | Bounding-box span intersections and needle-density estimate in a millimeter rectangle |
 | preview_3d | Actual Thread Lab image, optional millimeter focus rectangle and top/angled view, plus material/camera assumptions |
@@ -36,6 +37,19 @@ Example apply_edit arguments (replace REVISION with the returned revision):
   }]
 }
 ```
+
+### Wide, lustrous areas (0.13.0)
+
+Thread lies rail to rail. `params.split` (mm) turns a paired-rail column into split satin, which may be any width; `featherA`/`featherB` (mm) roughen rail 0 / rail 1 for fur. `smooth:true` rounds sparse control nodes. `add_satin` also accepts `spine` plus `width` (a number, or one per node) for tapered strokes. `add_region` fills a freeform outline (`points`, optional `holes`, `smooth`). Same-colour objects whose end and next start are within 1 mm stay connected without a trim.
+
+```json
+{"op":"add_satin","name":"Ear fringe","color":"#c99258","smooth":true,
+ "rails":[[{"x":33,"y":33},{"x":25,"y":42},{"x":23,"y":51.5}],
+          [{"x":33,"y":29.5},{"x":10,"y":14.5},{"x":20,"y":56}]],
+ "params":{"density":0.42,"split":6.5,"featherB":3.2,"underlay":true}}
+```
+
+`generate_stitches` returns `warnings.hotspots`: the five densest 2 × 2 mm cells with coordinates. `js/samples/timmy.js` is a complete portrait written with these commands; `node scripts/assistant-run.mjs js/samples/timmy.js out --3d --export` replays any such module into the real app in headless Chromium and writes previews, the PES and the project. In a browser, `window.goodsew.call(name, args)` reaches the same commands.
 
 Rail lists must have matching direction-node counts and the same traversal direction. Coordinates are world millimeters. Interpolation is bounded by the longer rail. density is full-cycle spacing: two crossing stitches per cycle. Column geometry defines width; pull adds a bounded rail extension. Crossed rails and throws over 10 mm are rejected; split these shapes instead. This is a conservative implementation limit, not a Brother machine specification.
 

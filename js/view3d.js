@@ -63,7 +63,7 @@ function hoopMesh(w, h, rim, depth, color) {
 export function open3DView(compiled,hoop,ui) {
   close3DView();
   const host=ui.container,W=host.clientWidth||800,H=host.clientHeight||520;
-  const settings={...VIEWER_DEFAULTS},model=prepareThreadSegments(compiled),colors=compiled.colors.map(c=>({...c}));
+  const settings={...VIEWER_DEFAULTS,...(ui.fabric?{fabric:ui.fabric}:{})},model=prepareThreadSegments(compiled),colors=compiled.colors.map(c=>({...c}));
   if(!model.totalStitches)throw new Error('There are no stitches to preview.');
   if(model.totalStitches>200000)throw new Error('The 3D viewer supports up to 200,000 stitches.');
   const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'});

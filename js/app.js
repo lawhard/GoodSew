@@ -1,5 +1,5 @@
 import {bakeRails} from './satin.js';
-import {createDesignController} from './design-commands.js';
+import {createDesignController,DESIGN_TOOLS} from './design-commands.js';
 import {mountAssistantPanel} from './assistant-panel.js';
 // GoodSew — SE700 embroidery designer. Main application controller.
 //
@@ -27,7 +27,7 @@ import { optimizeObjects } from "./order.js";
 import { buildSewSheet, FABRICS, fileStem } from "./sewing.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.12.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.13.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -215,7 +215,7 @@ let undoStack = [], redoStack = [], commitTimer = null;
 
 function historySnapshot() {
   return JSON.stringify({
-    name: state.name, fabric: state.fabric,
+    name: state.name, fabric: state.fabric, fabricColor: state.fabricColor,
     objects: state.objects.map((o) => ({
       id: o.id, type: o.type, name: o.name, color: o.color, kind: o.kind,
       box: o.box, rotation: o.rotation || 0, points: o.points, contours: o.contours, base: o._base, groupId: o.groupId,
@@ -242,7 +242,7 @@ function resetHistory() { clearTimeout(commitTimer); undoStack = []; redoStack =
 
 function restore(snap) {
   const data = JSON.parse(snap);
-  state.name = data.name || "My design"; state.fabric = data.fabric || "woven"; syncProjectUI();
+  state.name = data.name || "My design"; state.fabric = data.fabric || "woven"; state.fabricColor = data.fabricColor || null; syncProjectUI();
   state.objects = data.objects.map((o) => ({ ...o, _base: o.base, params: { ...o.params } }));
   state.guides = data.guides || [];
   setSel((data.selectedIds || (data.selectedId != null ? [data.selectedId] : [])).filter((id) => data.objects.some((o) => o.id === id)));
@@ -1580,13 +1580,19 @@ function buildSatinProps(host, obj) {
   if(obj.kind!=="satin-rails") row(host, "Width (mm)", numInput(obj.params.width ?? 4, 0.5, 0.5, (v) => { obj.params.width = Math.max(0.5, Math.min(10, v)); markDirty(); needsRender = true; commitSoon(); }));
   row(host, "Row spacing (mm)", numInput(obj.params.density ?? 0.4, 0.05, 0.2, (v) => { obj.params.density = Math.max(0.2, Math.min(1.2, v)); markDirty(); if(state.mode==='stitch')recompile(); commitSoon(); }));
   row(host, "Pull comp (mm)", numInput(obj.params.pull ?? 0.2, 0.1, 0, (v) => { obj.params.pull = Math.max(0, Math.min(1, v)); markDirty(); if(state.mode==='stitch')recompile(); commitSoon(); }));
+  if (obj.kind === "satin-rails") {
+    const tune = (key, max) => (v) => { obj.params[key] = Math.max(0, Math.min(max, v)); markDirty(); if(state.mode==='stitch')recompile(); commitSoon(); };
+    row(host, "Split satin: longest stitch (mm, 0 = off)", numInput(obj.params.split ?? 0, 0.5, 0, tune("split", 12)));
+    row(host, "Fur edge, first rail (mm)", numInput(obj.params.featherA ?? 0, 0.2, 0, tune("featherA", 8)));
+    row(host, "Fur edge, second rail (mm)", numInput(obj.params.featherB ?? 0, 0.2, 0, tune("featherB", 8)));
+  }
   const u = document.createElement("label"); u.className = "check";
   const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = obj.params.underlay !== false;
   cb.onchange = () => { obj.params.underlay = cb.checked; markDirty(); if(state.mode==='stitch')recompile(); commit(); };
   u.append(cb, document.createTextNode(" Underlay (center run)"));
   rowFull(host, "", u);
   const hint = document.createElement("div"); hint.className = "prop-hint";
-  hint.textContent = obj.kind==='satin-rails' ? 'Paired rails control width and direction. Cycle spacing creates two crossing stitches. Use Assistant control to edit matching rail nodes in millimeters.' : 'A satin column: zig-zag rails across the line you drew.';
+  hint.textContent = obj.kind==='satin-rails' ? 'Paired rails control width and direction; thread lies rail to rail. Split satin breaks long throws into staggered stitches so wide areas keep their sheen. Fur edge makes a rail irregular. Use Assistant control to edit rail nodes in millimeters.' : 'A satin column: zig-zag rails across the line you drew.';
   host.appendChild(hint);
   buildColorRow(host, obj);
 }
@@ -1847,14 +1853,34 @@ $("btn-new").onclick = () => {
   commit();
   toast("New design — Undo restores your previous work");
 };
-$("btn-reset").onclick = () => {
+$("btn-reset").onclick = () => $("sample-dialog").showModal();
+$("sample-close").onclick = () => $("sample-dialog").close();
+$("sample-heart").onclick = () => {
+  $("sample-dialog").close();
   if (state.objects.length && !confirm("Replace your current design with the sample heart + GoodSew design?")) return;
-  state.objects = []; state.guides = []; setSel([]); state.image = null;
+  state.objects = []; state.guides = []; setSel([]); state.image = null; state.fabricColor = null; syncProjectUI();
   seedDemo();
   markDirty(); setMode("design"); refreshObjectList(); refreshProps(); updateEmptyHint();
   commit(); needsRender = true;
   toast("Reset to the sample design");
 };
+$("sample-timmy").onclick = () => { $("sample-dialog").close(); loadSample("timmy", true); };
+// Samples are plain lists of assistant commands, applied through the same
+// validated path an AI assistant uses — a worked example of driving the app.
+async function loadSample(name, ask) {
+  try {
+    if (ask && state.objects.length && !confirm("Replace your current design with the Timmy sample? Undo restores your work.")) return;
+    const sample = await import("./samples/timmy.js");
+    setMode("design");
+    let design = await designCommand("get_design");
+    const operations = [...design.objects.map(o => ({ op: "remove", id: o.id })), ...sample.operations];
+    for (let i = 0; i < operations.length; i += 100) design = await designCommand("apply_edit", { expectedRevision: design.revision, requestId: crypto.randomUUID(), operations: operations.slice(i, i + 100) });
+    state.name = sample.NAME; state.fabricColor = sample.FABRIC; state.guides = []; syncProjectUI();
+    commit(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
+    await renderStitches();
+    toast("Timmy loaded: split-satin fur, " + sample.operations.length + " objects. Open 3D View to see the sheen.");
+  } catch (err) { toast("Could not load the sample: " + err.message, true); }
+}
 $("draw-finish").onclick = () => finishDrawing();
 $("draw-cancel").onclick = () => { cancelDrawing(); setTool("select"); };
 $("file-svg").onchange = (e) => {
@@ -1948,7 +1974,7 @@ async function showThreadViewer(plan, title) {
     const mod=await import("./view3d.js");if(ticket!==viewerRequest)return;
     mod.open3DView(plan,getHoop(state.hoopId),{
       container:$("view3d-stage"),play:$("view3d-play"),scrub:$("view3d-scrub"),speed:$("view3d-speed"),counter:$("view3d-counter"),views:$("view3d-views"),
-      controls:$("view3d-controls"),threads:$("view3d-threads"),reset:$("view3d-reset-material"),snapshot:$("view3d-snapshot")
+      controls:$("view3d-controls"),threads:$("view3d-threads"),reset:$("view3d-reset-material"),snapshot:$("view3d-snapshot"),fabric:state.fabricColor
     });window.__gs3d=true;
   } catch(err) {
     if(ticket!==viewerRequest)return;
@@ -2093,6 +2119,7 @@ function syncProjectUI() {
   $("project-name").value = state.name;
   $("fabric-select").value = state.fabric;
   $("fabric-note").textContent = FABRICS[state.fabric].note;
+  $("fabric-color").value = state.fabricColor || "#ffffff";
 }
 function refreshSewing() {
   const badge = $("design-status"); if (!badge) return;
@@ -2165,6 +2192,7 @@ function addBasting() {
 $("project-name").oninput = e => {state.name=e.target.value.slice(0,80);commitSoon();};
 $("fabric-select").onchange = e => {state.fabric=e.target.value;syncProjectUI();commit();};
 $("btn-fabric").onclick=applyFabric;
+$("fabric-color").oninput = e => {state.fabricColor=e.target.value.toLowerCase()==="#ffffff"?null:e.target.value;needsRender=true;commitSoon();};
 $("btn-fit-hoop").onclick=fitToHoop;
 $("btn-baste").onclick=addBasting;
 $("btn-sew-sheet").onclick=()=>{ensureCompiled();if(!compiled.plan.length){toast("Generate stitches first.",true);return;}download(buildSewSheet(compiled,state.name,state.fabric),fileStem(state.name)+'-sewing-sheet.html','text/html');};
@@ -2185,6 +2213,11 @@ async function commandCompile(){
  await prepareCommandObjects(state.objects);markDirty();recompile();
  return {stats:computeStats(compiled),warnings:analyzeQuality(compiled),bounds:compiled.bounds,colors:compiled.colors};
 }
+function commandFabric(args){
+ if(args.fabric===undefined)return;
+ if(!/^#[0-9a-f]{6}$/i.test(args.fabric))throw Error('fabric must be a #rrggbb color.');
+ state.fabricColor=args.fabric.toLowerCase()==='#ffffff'?null:args.fabric.toLowerCase();syncProjectUI();needsRender=true;commit();
+}
 const designCommand=createDesignController({
  fingerprint:historySnapshot,objects:()=>state.objects,nextId,
  read:()=>({name:state.name,machine:SE700,selectedIds:[...state.selectedIds],objects:state.objects.map(o=>({id:o.id,type:o.type,kind:o.kind,name:o.name,color:o.color,box:o.box,points:o.points,rails:o._rails,rotation:o.rotation,params:{...o.params},visible:o.visible,groupId:o.groupId}))}),
@@ -2199,7 +2232,12 @@ const designCommand=createDesignController({
   const {capture3DView}=await import('./view3d.js');
   return {filename:args.filename,stats:computeStats(plan),warnings,bounds:plan.bounds,colors:plan.colors,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',physicalSimulation:false},editableProjectChanged:false};
  },
- preview_3d:async(args)=>{if(args.focus&&(![args.focus.x,args.focus.y,args.focus.w,args.focus.h].every(Number.isFinite)||args.focus.w<=0||args.focus.h<=0||args.focus.w>200||args.focus.h>200))throw Error('Preview region must have positive dimensions up to 200 mm.');const result=await commandCompile();await showThreadViewer(compiled,state.name);const {capture3DView}=await import('./view3d.js');return {...result,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',camera:args.focus?{focus:args.focus,view:args.view||'top'}:'initial fit',physicalSimulation:false}};},
+ preview_2d:async(args)=>{
+  if(args.focus&&(![args.focus.x,args.focus.y,args.focus.w,args.focus.h].every(Number.isFinite)||args.focus.w<=0||args.focus.h<=0||args.focus.w>200||args.focus.h>200))throw Error('Preview region must have positive dimensions up to 200 mm.');
+  commandFabric(args);const result=await commandCompile();const {renderStitchPreview}=await import('./preview2d.js');
+  return {...result,image:renderStitchPreview(compiled,{focus:args.focus,fabric:state.fabricColor||'#e4dfd1',width:Math.max(300,Math.min(2400,args.width||1100))}).split(',')[1],previewAssumptions:{threadWidthMM:.36,light:'upper left',fabric:state.fabricColor||'#e4dfd1',physicalSimulation:false}};
+ },
+ preview_3d:async(args)=>{commandFabric(args);if(args.focus&&(![args.focus.x,args.focus.y,args.focus.w,args.focus.h].every(Number.isFinite)||args.focus.w<=0||args.focus.h<=0||args.focus.w>200||args.focus.h>200))throw Error('Preview region must have positive dimensions up to 200 mm.');const result=await commandCompile();await showThreadViewer(compiled,state.name);const {capture3DView}=await import('./view3d.js');return {...result,image:capture3DView(args.focus,args.view).split(',')[1],previewAssumptions:{diameterMM:.24,loft:.55,finish:'polyester',fabric:'woven',camera:args.focus?{focus:args.focus,view:args.view||'top'}:'initial fit',physicalSimulation:false}};},
  inspect_region:async({x,y,w,h})=>{
   if(w<=0||h<=0||w>200||h>200)throw Error('Use a positive inspection rectangle up to 200 mm.');
   await commandCompile();const {prepareThreadSegments}=await import('./thread-model.js');const spans=prepareThreadSegments(compiled).segments;
@@ -2219,6 +2257,10 @@ const designCommand=createDesignController({
  }
 });
 mountAssistantPanel(designCommand);
+if (new URLSearchParams(globalThis.location?.search || '').get('sample') === 'timmy') loadSample('timmy', false);
+// The same validated command authority for in-page agents (browser extensions,
+// automation). It can do nothing the visible Assistant control panel cannot.
+window.goodsew={call:designCommand,tools:DESIGN_TOOLS};
 async function replaceWithSatinRound(obj){
  try{
   const before=await designCommand('get_design'),b=getObjBox(obj),text=obj.params.text;

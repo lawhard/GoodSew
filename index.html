@@ -25,38 +25,41 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.12.0" />
+  <link rel="stylesheet" href="css/styles.css?v=0.13.0" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.12.0",
-      "./js/hoop.js": "./js/hoop.js?v=0.12.0",
-      "./js/threads.js": "./js/threads.js?v=0.12.0",
-      "./js/compiler.js": "./js/compiler.js?v=0.12.0",
-      "./js/stats.js": "./js/stats.js?v=0.12.0",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.12.0",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.12.0",
-      "./js/render.js": "./js/render.js?v=0.12.0",
-      "./js/simulator.js": "./js/simulator.js?v=0.12.0",
-      "./js/geometry.js": "./js/geometry.js?v=0.12.0",
-      "./js/shapes.js": "./js/shapes.js?v=0.12.0",
-      "./js/fonts.js": "./js/fonts.js?v=0.12.0",
-      "./js/units.js": "./js/units.js?v=0.12.0",
-      "./js/preview.js": "./js/preview.js?v=0.12.0",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.12.0",
-      "./js/import/raster.js": "./js/import/raster.js?v=0.12.0",
-      "./js/order.js": "./js/order.js?v=0.12.0",
-      "./js/sewing.js": "./js/sewing.js?v=0.12.0",
-      "./js/qa.js": "./js/qa.js?v=0.12.0",
-      "./js/stitches.js": "./js/stitches.js?v=0.12.0",
-      "./js/import/pes.js": "./js/import/pes.js?v=0.12.0",
-      "./js/thread-model.js": "./js/thread-model.js?v=0.12.0",
-      "./js/view3d.js": "./js/view3d.js?v=0.12.0",
-      "three": "./vendor/three.module.min.js?v=0.12.0",
-      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.12.0"
+      "./js/state.js": "./js/state.js?v=0.13.0",
+      "./js/hoop.js": "./js/hoop.js?v=0.13.0",
+      "./js/threads.js": "./js/threads.js?v=0.13.0",
+      "./js/compiler.js": "./js/compiler.js?v=0.13.0",
+      "./js/stats.js": "./js/stats.js?v=0.13.0",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.13.0",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.13.0",
+      "./js/render.js": "./js/render.js?v=0.13.0",
+      "./js/simulator.js": "./js/simulator.js?v=0.13.0",
+      "./js/geometry.js": "./js/geometry.js?v=0.13.0",
+      "./js/shapes.js": "./js/shapes.js?v=0.13.0",
+      "./js/fonts.js": "./js/fonts.js?v=0.13.0",
+      "./js/units.js": "./js/units.js?v=0.13.0",
+      "./js/preview.js": "./js/preview.js?v=0.13.0",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.13.0",
+      "./js/import/raster.js": "./js/import/raster.js?v=0.13.0",
+      "./js/order.js": "./js/order.js?v=0.13.0",
+      "./js/sewing.js": "./js/sewing.js?v=0.13.0",
+      "./js/qa.js": "./js/qa.js?v=0.13.0",
+      "./js/stitches.js": "./js/stitches.js?v=0.13.0",
+      "./js/import/pes.js": "./js/import/pes.js?v=0.13.0",
+      "./js/thread-model.js": "./js/thread-model.js?v=0.13.0",
+      "./js/view3d.js": "./js/view3d.js?v=0.13.0",
+      "./js/preview2d.js": "./js/preview2d.js?v=0.13.0",
+      "./js/samples/timmy.js": "./js/samples/timmy.js?v=0.13.0",
+      "./js/satin.js": "./js/satin.js?v=0.13.0",
+      "three": "./vendor/three.module.min.js?v=0.13.0",
+      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.13.0"
     }
   }
   </script>
@@ -72,7 +75,7 @@
 
     <div class="topbar-actions">
       <button id="btn-new" class="btn" title="New design">New</button>
-      <button id="btn-reset" class="btn" title="Reset to the sample heart + GoodSew design">Sample</button>
+      <button id="btn-reset" class="btn" title="Load a sample design">Samples</button>
       <button id="btn-save-json" class="btn" title="Save project">Save</button>
       <button id="btn-load-json" class="btn" title="Open project">Open</button>
 
@@ -173,14 +176,14 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>Generate stitches →</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.12.0</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.13.0</div>
     </main>
 
     <!-- Right -->
     <aside id="sidepanel">
       <section class="panel preparation"><h3>Prepare to sew</h3>
         <label for="fabric-select">Fabric</label><select id="fabric-select" class="select"><option value="woven">Woven cotton</option><option value="knit">T-shirt / knit</option><option value="towel">Towel / fleece</option></select>
-        <p id="fabric-note" class="prop-hint"></p><button id="btn-fabric" class="btn" title="Apply starting settings to selected objects, or all objects if nothing is selected">Apply starting settings</button>
+        <p id="fabric-note" class="prop-hint"></p><label class="fabric-color-row" for="fabric-color" title="Ground colour used in the workspace and previews. Saved with the project.">Fabric color <input id="fabric-color" type="color" value="#ffffff"/></label><button id="btn-fabric" class="btn" title="Apply starting settings to selected objects, or all objects if nothing is selected">Apply starting settings</button>
         <div class="prepare-actions"><button id="btn-fit-hoop" class="btn">Fit to hoop</button><button id="btn-baste" class="btn">Add basting</button></div>
       </section>
       <section class="panel mode-design" id="object-panel">
@@ -247,6 +250,10 @@
     </div>
   </footer>
 
+  <dialog id="sample-dialog" class="sample-dialog"><h2>Sample designs</h2><p>Each one replaces the current design. Undo brings your work back.</p>
+    <button id="sample-timmy" class="sample-choice"><b>Timmy the Yorkie</b><span>A satin portrait digitized by an AI assistant: split-satin fur laid in the direction the coat grows, feathered edges, 8 thread stops, about 8,900 stitches.</span></button>
+    <button id="sample-heart" class="sample-choice"><b>Heart + lettering</b><span>The starter design: a filled heart and outline-font text.</span></button>
+    <button id="sample-close" class="btn">Cancel</button></dialog>
   <dialog id="help-dialog"><div class="guide-head"><span class="eyebrow">FROM ARTWORK TO THREAD</span><button id="help-close" class="btn" aria-label="Close quick guide">Close</button></div><h2>Your first stitch-out</h2>
     <ol><li><b>Design.</b> Add lettering, shapes, or a clean SVG/PNG logo. Keep small lettering bold and readable. Select a layer to edit its size; Shift-click selects more.</li><li><b>Prepare.</b> Choose fabric and apply starting settings. Fit to hoop reserves space at the edges. Basting adds a removable outline before the design.</li><li><b>Check.</b> Generate stitches. Inspect holes, crossings, and tiny details. Play the sewing sequence and review the quality messages. Smaller row spacing means denser stitching.</li><li><b>Sew.</b> Download PES and the sewing sheet. Copy PES to a compatible USB drive, recall it on the SE700, and test on matching scrap. Use the sheet for spool order.</li></ol>
     <p>Wireless transfer uses Brother Design Database Transfer on a compatible Windows PC. Good Sew does not connect directly to the machine.</p><p>Digital previews cannot predict fabric distortion or thread tension. Jump threads may need manual cutting. PES palette colors are approximations of your chosen spools.</p>
@@ -353,6 +360,6 @@
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.12.0"></script>
+  <script type="module" src="js/app.js?v=0.13.0"></script>
 </body>
 </html>

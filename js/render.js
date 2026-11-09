@@ -85,7 +85,8 @@ export function boxHandlesWorld(box) {
 
 export function render(ctx, state, compiled, sim, opts) {
   const { cam, view } = opts;
-  const TH = THEMES[state.theme] || THEMES.light;
+  const TH = { ...(THEMES[state.theme] || THEMES.light) };
+  if (state.fabricColor) TH.field = state.fabricColor; // project fabric colour
   const canvas = ctx.canvas;
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
