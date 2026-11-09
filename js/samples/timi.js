@@ -1,9 +1,9 @@
-// Timmy the Yorkie — authored through the Good Sew assistant commands.
+// Timi the Yorkie — authored through the Good Sew assistant commands.
 // Coordinates are millimetres in the SE700 4×4 field, measured from the photo
 // with a millimetre grid. Every area is split satin whose rails sit across the
 // way the fur lies, so each patch of coat catches the light in its own direction.
 const P=(...a)=>{const o=[];for(let i=0;i<a.length;i+=2)o.push({x:a[i],y:a[i+1]});return o;};
-export const NAME='Timmy';
+export const NAME='Timi';
 export const FABRIC='#33415c';
 export const COLORS={tan:'#c99258',rose:'#a9766a',cream:'#f1e8d6',sand:'#dcb98f',brown:'#6b452e',black:'#0b0b0b',white:'#fbfaf5'};
 const fur={density:.42,split:6.5,underlay:true,pull:.15};

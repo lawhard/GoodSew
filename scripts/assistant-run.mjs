@@ -3,7 +3,7 @@
 // the Assistant panel and the MCP connector use — and saves previews + PES.
 import puppeteer from 'puppeteer-core';
 import {createServer} from 'node:http';import {readFile,writeFile,mkdir} from 'node:fs/promises';import {extname,resolve} from 'node:path';
-const [, , modulePath='js/samples/timmy.js',outDir='dist-design',...flags]=process.argv;
+const [, , modulePath='js/samples/timi.js',outDir='dist-design',...flags]=process.argv;
 const root=resolve(new URL('..',import.meta.url).pathname),types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.png':'image/png','.ttf':'font/ttf','.json':'application/json','.txt':'text/plain'};
 const server=createServer(async(req,res)=>{try{const path=resolve(root,'.'+decodeURIComponent(new URL(req.url,'http://x').pathname.replace(/\/$/,'/index.html')));if(!path.startsWith(root))throw 0;res.writeHead(200,{'Content-Type':types[extname(path)]||'application/octet-stream','Cache-Control':'no-store'});res.end(await readFile(path));}catch{res.writeHead(404);res.end();}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));

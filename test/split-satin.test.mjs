@@ -4,7 +4,8 @@ import {prepareEdits} from '../js/design-commands.js';
 import {compile} from '../js/compiler.js';
 import {analyzeQuality} from '../js/qa.js';
 import {exportPES} from '../js/export/pes.js';import {parsePES} from '../js/import/pes.js';
-import {operations} from '../js/samples/timmy.js';
+import {operations} from '../js/samples/timi.js';
+import {operations as lineOps} from '../js/samples/timi-line.js';
 const len=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const wide=[[{x:10,y:10},{x:40,y:10}],[{x:10,y:40},{x:40,y:40}]];
 test('split satin sews a wide area with bounded, staggered stitches',()=>{
@@ -38,13 +39,22 @@ test('assistant can add freeform regions and spine-width satin',()=>{
  assert.ok(compile(r.objects).plan.length>500);
  assert.throws(()=>prepareEdits([],[{op:'add_satin',spine:[{x:0,y:0},{x:5,y:5}]}],()=>1),/spine plus width/);
 });
-test('Timmy sample compiles within SE700 limits and survives a PES round trip',()=>{
+test('Timi sample compiles within SE700 limits and survives a PES round trip',()=>{
  let id=0;const {objects}=prepareEdits([],operations,()=>++id),compiled=compile(objects),qa=analyzeQuality(compiled);
  const stitches=compiled.plan.filter(s=>s.cmd==='stitch');
  assert.ok(qa.valid,qa.warnings.filter(w=>w.sev==='error').map(w=>w.msg).join(' '));
  assert.ok(stitches.length>6000&&stitches.length<15000);assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);
  assert.ok(qa.maxLen<=7.5,'no long loose floats: '+qa.maxLen);assert.ok(qa.peakNeedlesPer2mmCell<=60,'no overdense cell');
  assert.equal(compiled.colors.length,8);assert.ok(compiled.plan.filter(s=>s.cmd==='trim').length<40);
- const decoded=parsePES(exportPES(compiled,'Timmy'),'timmy.pes').plan.filter(s=>s.cmd==='stitch');
+ const decoded=parsePES(exportPES(compiled,'Timi'),'timi.pes').plan.filter(s=>s.cmd==='stitch');
  assert.equal(decoded.length,stitches.length);
+});
+test('Timi line portrait is one thread of sewable satin with open catchlights',()=>{
+ let id=0;const {objects}=prepareEdits([],lineOps,()=>++id),compiled=compile(objects),qa=analyzeQuality(compiled);
+ assert.ok(qa.valid);assert.equal(compiled.colors.length,1);assert.ok(objects.every(o=>o.kind==='satin-rails'),'every line is a satin column');
+ assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);assert.ok(qa.maxLen<=8,'longest stitch '+qa.maxLen);assert.ok(qa.peakNeedlesPer2mmCell<=60);
+ assert.ok(compiled.plan.filter(s=>s.cmd==='trim').length<=34,'chained strokes keep jumps down');
+ // the catchlights must stay unstitched: no needle point and no thread crosses them
+ const st=compiled.plan.filter(s=>s.cmd==='stitch');
+ for(const h of [{x0:34,x1:35.6,y0:45,y1:46},{x0:54.6,x1:56.5,y0:47.4,y1:48.4}])assert.ok(!st.some(s=>s.x>h.x0&&s.x<h.x1&&s.y>h.y0&&s.y<h.y1),'catchlight is bare cloth');
 });

@@ -49,7 +49,7 @@ Thread lies rail to rail. `params.split` (mm) turns a paired-rail column into sp
  "params":{"density":0.42,"split":6.5,"featherB":3.2,"underlay":true}}
 ```
 
-`generate_stitches` returns `warnings.hotspots`: the five densest 2 × 2 mm cells with coordinates. `js/samples/timmy.js` is a complete portrait written with these commands; `node scripts/assistant-run.mjs js/samples/timmy.js out --3d --export` replays any such module into the real app in headless Chromium and writes previews, the PES and the project. In a browser, `window.goodsew.call(name, args)` reaches the same commands.
+`generate_stitches` returns `warnings.hotspots`: the five densest 2 × 2 mm cells with coordinates. `js/samples/timi.js` is a complete portrait written with these commands; `node scripts/assistant-run.mjs js/samples/timi.js out --3d --export` replays any such module into the real app in headless Chromium and writes previews, the PES and the project. In a browser, `window.goodsew.call(name, args)` reaches the same commands.
 
 Rail lists must have matching direction-node counts and the same traversal direction. Coordinates are world millimeters. Interpolation is bounded by the longer rail. density is full-cycle spacing: two crossing stitches per cycle. Column geometry defines width; pull adds a bounded rail extension. Crossed rails and throws over 10 mm are rejected; split these shapes instead. This is a conservative implementation limit, not a Brother machine specification.
 

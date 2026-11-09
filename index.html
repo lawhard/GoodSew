@@ -25,41 +25,42 @@
   <meta name="twitter:description" content="Design text and logos, then turn them into real machine stitches — right in your browser. Free, no install." />
   <meta name="twitter:image" content="https://goodsew.win/og.png" />
 
-  <link rel="stylesheet" href="css/styles.css?v=0.13.0" />
+  <link rel="stylesheet" href="css/styles.css?v=0.14.0" />
   <!-- Cache-bust the WHOLE ES-module graph on each version. Browsers honor this
        import map; Node (the test suite) ignores it and imports files directly.
        This prevents a fresh index.html loading stale cached submodules. -->
   <script type="importmap">
   {
     "imports": {
-      "./js/state.js": "./js/state.js?v=0.13.0",
-      "./js/hoop.js": "./js/hoop.js?v=0.13.0",
-      "./js/threads.js": "./js/threads.js?v=0.13.0",
-      "./js/compiler.js": "./js/compiler.js?v=0.13.0",
-      "./js/stats.js": "./js/stats.js?v=0.13.0",
-      "./js/export/pes.js": "./js/export/pes.js?v=0.13.0",
-      "./js/export/dst.js": "./js/export/dst.js?v=0.13.0",
-      "./js/render.js": "./js/render.js?v=0.13.0",
-      "./js/simulator.js": "./js/simulator.js?v=0.13.0",
-      "./js/geometry.js": "./js/geometry.js?v=0.13.0",
-      "./js/shapes.js": "./js/shapes.js?v=0.13.0",
-      "./js/fonts.js": "./js/fonts.js?v=0.13.0",
-      "./js/units.js": "./js/units.js?v=0.13.0",
-      "./js/preview.js": "./js/preview.js?v=0.13.0",
-      "./js/import/svg.js": "./js/import/svg.js?v=0.13.0",
-      "./js/import/raster.js": "./js/import/raster.js?v=0.13.0",
-      "./js/order.js": "./js/order.js?v=0.13.0",
-      "./js/sewing.js": "./js/sewing.js?v=0.13.0",
-      "./js/qa.js": "./js/qa.js?v=0.13.0",
-      "./js/stitches.js": "./js/stitches.js?v=0.13.0",
-      "./js/import/pes.js": "./js/import/pes.js?v=0.13.0",
-      "./js/thread-model.js": "./js/thread-model.js?v=0.13.0",
-      "./js/view3d.js": "./js/view3d.js?v=0.13.0",
-      "./js/preview2d.js": "./js/preview2d.js?v=0.13.0",
-      "./js/samples/timmy.js": "./js/samples/timmy.js?v=0.13.0",
-      "./js/satin.js": "./js/satin.js?v=0.13.0",
-      "three": "./vendor/three.module.min.js?v=0.13.0",
-      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.13.0"
+      "./js/state.js": "./js/state.js?v=0.14.0",
+      "./js/hoop.js": "./js/hoop.js?v=0.14.0",
+      "./js/threads.js": "./js/threads.js?v=0.14.0",
+      "./js/compiler.js": "./js/compiler.js?v=0.14.0",
+      "./js/stats.js": "./js/stats.js?v=0.14.0",
+      "./js/export/pes.js": "./js/export/pes.js?v=0.14.0",
+      "./js/export/dst.js": "./js/export/dst.js?v=0.14.0",
+      "./js/render.js": "./js/render.js?v=0.14.0",
+      "./js/simulator.js": "./js/simulator.js?v=0.14.0",
+      "./js/geometry.js": "./js/geometry.js?v=0.14.0",
+      "./js/shapes.js": "./js/shapes.js?v=0.14.0",
+      "./js/fonts.js": "./js/fonts.js?v=0.14.0",
+      "./js/units.js": "./js/units.js?v=0.14.0",
+      "./js/preview.js": "./js/preview.js?v=0.14.0",
+      "./js/import/svg.js": "./js/import/svg.js?v=0.14.0",
+      "./js/import/raster.js": "./js/import/raster.js?v=0.14.0",
+      "./js/order.js": "./js/order.js?v=0.14.0",
+      "./js/sewing.js": "./js/sewing.js?v=0.14.0",
+      "./js/qa.js": "./js/qa.js?v=0.14.0",
+      "./js/stitches.js": "./js/stitches.js?v=0.14.0",
+      "./js/import/pes.js": "./js/import/pes.js?v=0.14.0",
+      "./js/thread-model.js": "./js/thread-model.js?v=0.14.0",
+      "./js/view3d.js": "./js/view3d.js?v=0.14.0",
+      "./js/preview2d.js": "./js/preview2d.js?v=0.14.0",
+      "./js/samples/timi.js": "./js/samples/timi.js?v=0.14.0",
+      "./js/samples/timi-line.js": "./js/samples/timi-line.js?v=0.14.0",
+      "./js/satin.js": "./js/satin.js?v=0.14.0",
+      "three": "./vendor/three.module.min.js?v=0.14.0",
+      "./vendor/three.core.min.js": "./vendor/three.core.min.js?v=0.14.0"
     }
   }
   </script>
@@ -176,7 +177,7 @@
         Click <b>Text</b> or <b>Shape</b> on the left to start. When your layout looks
         right, hit <b>Generate stitches →</b>.
       </div>
-      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.13.0</div>
+      <div id="version-badge" class="version-badge" title="Build version">GoodSew v0.14.0</div>
     </main>
 
     <!-- Right -->
@@ -251,7 +252,8 @@
   </footer>
 
   <dialog id="sample-dialog" class="sample-dialog"><h2>Sample designs</h2><p>Each one replaces the current design. Undo brings your work back.</p>
-    <button id="sample-timmy" class="sample-choice"><b>Timmy the Yorkie</b><span>A satin portrait digitized by an AI assistant: split-satin fur laid in the direction the coat grows, feathered edges, 8 thread stops, about 8,900 stitches.</span></button>
+    <button id="sample-timi" class="sample-choice"><b>Timi the Yorkie</b><span>A satin portrait digitized by an AI assistant: split-satin fur laid in the direction the coat grows, feathered edges, 8 thread stops, about 8,900 stitches.</span></button>
+    <button id="sample-timi-line" class="sample-choice"><b>Timi, line portrait</b><span>One black thread. Traced over her photo and sewn entirely as satin lines, with bare-cloth catchlights in her eyes and nose.</span></button>
     <button id="sample-heart" class="sample-choice"><b>Heart + lettering</b><span>The starter design: a filled heart and outline-font text.</span></button>
     <button id="sample-close" class="btn">Cancel</button></dialog>
   <dialog id="help-dialog"><div class="guide-head"><span class="eyebrow">FROM ARTWORK TO THREAD</span><button id="help-close" class="btn" aria-label="Close quick guide">Close</button></div><h2>Your first stitch-out</h2>
@@ -360,6 +362,6 @@
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
 
   <script src="vendor/opentype.min.js"></script>
-  <script type="module" src="js/app.js?v=0.13.0"></script>
+  <script type="module" src="js/app.js?v=0.14.0"></script>
 </body>
 </html>

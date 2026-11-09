@@ -27,7 +27,7 @@ import { optimizeObjects } from "./order.js";
 import { buildSewSheet, FABRICS, fileStem } from "./sewing.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.13.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.14.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -1864,21 +1864,22 @@ $("sample-heart").onclick = () => {
   commit(); needsRender = true;
   toast("Reset to the sample design");
 };
-$("sample-timmy").onclick = () => { $("sample-dialog").close(); loadSample("timmy", true); };
+$("sample-timi").onclick = () => { $("sample-dialog").close(); loadSample("timi", true); };
+$("sample-timi-line").onclick = () => { $("sample-dialog").close(); loadSample("timi-line", true); };
 // Samples are plain lists of assistant commands, applied through the same
 // validated path an AI assistant uses — a worked example of driving the app.
 async function loadSample(name, ask) {
   try {
-    if (ask && state.objects.length && !confirm("Replace your current design with the Timmy sample? Undo restores your work.")) return;
-    const sample = await import("./samples/timmy.js");
+    if (ask && state.objects.length && !confirm("Replace your current design with this sample? Undo restores your work.")) return;
+    const sample = name === "timi-line" ? await import("./samples/timi-line.js") : await import("./samples/timi.js");
     setMode("design");
     let design = await designCommand("get_design");
     const operations = [...design.objects.map(o => ({ op: "remove", id: o.id })), ...sample.operations];
     for (let i = 0; i < operations.length; i += 100) design = await designCommand("apply_edit", { expectedRevision: design.revision, requestId: crypto.randomUUID(), operations: operations.slice(i, i + 100) });
-    state.name = sample.NAME; state.fabricColor = sample.FABRIC; state.guides = []; syncProjectUI();
+    state.name = sample.NAME; state.fabricColor = sample.FABRIC === '#ffffff' ? null : sample.FABRIC; state.guides = []; syncProjectUI();
     commit(); refreshObjectList(); refreshProps(); updateEmptyHint(); needsRender = true;
     await renderStitches();
-    toast("Timmy loaded: split-satin fur, " + sample.operations.length + " objects. Open 3D View to see the sheen.");
+    toast(sample.NAME + " loaded: " + sample.operations.length + " satin objects. Open 3D View to see the thread.");
   } catch (err) { toast("Could not load the sample: " + err.message, true); }
 }
 $("draw-finish").onclick = () => finishDrawing();
@@ -2257,7 +2258,7 @@ const designCommand=createDesignController({
  }
 });
 mountAssistantPanel(designCommand);
-if (new URLSearchParams(globalThis.location?.search || '').get('sample') === 'timmy') loadSample('timmy', false);
+{ const wanted = new URLSearchParams(globalThis.location?.search || '').get('sample'); if (wanted === 'timi' || wanted === 'timmy') loadSample('timi', false); else if (wanted === 'timi-line') loadSample('timi-line', false); }
 // The same validated command authority for in-page agents (browser extensions,
 // automation). It can do nothing the visible Assistant control panel cannot.
 window.goodsew={call:designCommand,tools:DESIGN_TOOLS};
