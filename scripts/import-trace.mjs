@@ -12,5 +12,5 @@ for(const op of t.operations){
  if(error)bad.push(op.name+': '+error.message);
 }
 const compact=JSON.stringify(good).replace(/\},\{"op"/g,'},\n {"op"');
-await writeFile(out,`// ${t.name} — traced automatically from black-on-white line art by\n// tools/trace_lineart.py: each stroke is a satin column (skeleton centre line,\n// measured width), solid shapes are fills that keep their white highlights.\nexport const NAME=${JSON.stringify(t.name)};\nexport const FABRIC='#ffffff';\nexport const operations=[\n ${compact.slice(1,-1)}\n];\n`);
+await writeFile(out,`// ${t.name} — traced automatically from black-on-white line art by\n// tools/trace_lineart.py: each stroke is a satin column (skeleton centre line,\n// measured width), solid shapes are fills that keep their white highlights.\nexport const NAME=${JSON.stringify(t.name)};\nexport const FABRIC=${JSON.stringify(t.fabric||'#ffffff')};\nexport const operations=[\n ${compact.slice(1,-1)}\n];\n`);
 console.log(`${good.length} commands written, ${bad.length} rejected`);for(const b of bad)console.log('  rejected',b);

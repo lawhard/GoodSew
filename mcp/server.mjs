@@ -13,7 +13,7 @@ input.on('line',async line=>{
   if(message.jsonrpc!=='2.0'||typeof message.method!=='string')return output({jsonrpc:'2.0',id:message.id,error:{code:-32600,message:'Invalid request'}});
   let result;
   if(message.method==='initialize'){
-   initialized=true;result={protocolVersion:['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(message.params?.protocolVersion)?message.params.protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'good-sew',version:'0.16.0'},instructions:'Enable local MCP in the intended Good Sew browser tab. Read the design revision before edits. Use requestId for idempotency. Inspect numerical results and preview; physical sew-out is still needed.'};
+   initialized=true;result={protocolVersion:['2024-11-05','2025-03-26','2025-06-18','2025-11-25'].includes(message.params?.protocolVersion)?message.params.protocolVersion:'2025-11-25',capabilities:{tools:{}},serverInfo:{name:'good-sew',version:'0.17.0'},instructions:'Enable local MCP in the intended Good Sew browser tab. Read the design revision before edits. Use requestId for idempotency. Inspect numerical results and preview; physical sew-out is still needed.'};
   }else if(message.method==='ping')result={};
   else if(!initialized)throw Error('Initialize the connection first.');
   else if(message.method==='tools/list')result={tools:DESIGN_TOOLS};

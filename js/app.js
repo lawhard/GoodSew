@@ -27,7 +27,7 @@ import { optimizeObjects } from "./order.js";
 import { buildSewSheet, FABRICS, fileStem } from "./sewing.js";
 import { analyzeQuality } from "./qa.js";
 
-const APP_VERSION = "0.16.0"; // keep in sync with the badge in index.html
+const APP_VERSION = "0.17.0"; // keep in sync with the badge in index.html
 
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
@@ -1865,6 +1865,7 @@ $("sample-heart").onclick = () => {
   toast("Reset to the sample design");
 };
 $("sample-timi").onclick = () => { $("sample-dialog").close(); loadSample("timi", true); };
+$("sample-timi-white").onclick = () => { $("sample-dialog").close(); loadSample("timi-white", true); };
 $("sample-timi-three").onclick = () => { $("sample-dialog").close(); loadSample("timi-three", true); };
 $("sample-timi-brush").onclick = () => { $("sample-dialog").close(); loadSample("timi-brush", true); };
 $("sample-timi-line").onclick = () => { $("sample-dialog").close(); loadSample("timi-line", true); };
@@ -1873,7 +1874,7 @@ $("sample-timi-line").onclick = () => { $("sample-dialog").close(); loadSample("
 async function loadSample(name, ask) {
   try {
     if (ask && state.objects.length && !confirm("Replace your current design with this sample? Undo restores your work.")) return;
-    const sample = name === "timi-three" ? await import("./samples/timi-three.js") : name === "timi-brush" ? await import("./samples/timi-brush.js") : name === "timi-line" ? await import("./samples/timi-line.js") : await import("./samples/timi.js");
+    const sample = name === "timi-white" ? await import("./samples/timi-white.js") : name === "timi-three" ? await import("./samples/timi-three.js") : name === "timi-brush" ? await import("./samples/timi-brush.js") : name === "timi-line" ? await import("./samples/timi-line.js") : await import("./samples/timi.js");
     setMode("design");
     let design = await designCommand("get_design");
     const operations = [...design.objects.map(o => ({ op: "remove", id: o.id })), ...sample.operations];
@@ -2260,7 +2261,7 @@ const designCommand=createDesignController({
  }
 });
 mountAssistantPanel(designCommand);
-{ const wanted = new URLSearchParams(globalThis.location?.search || '').get('sample'); if (wanted === 'timi' || wanted === 'timmy') loadSample('timi', false); else if (wanted === 'timi-line' || wanted === 'timi-brush' || wanted === 'timi-three') loadSample(wanted, false); }
+{ const wanted = new URLSearchParams(globalThis.location?.search || '').get('sample'); if (wanted === 'timi' || wanted === 'timmy') loadSample('timi', false); else if (wanted === 'timi-line' || wanted === 'timi-brush' || wanted === 'timi-three' || wanted === 'timi-white') loadSample(wanted, false); }
 // The same validated command authority for in-page agents (browser extensions,
 // automation). It can do nothing the visible Assistant control panel cannot.
 window.goodsew={call:designCommand,tools:DESIGN_TOOLS};

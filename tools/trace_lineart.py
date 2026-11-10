@@ -31,14 +31,19 @@ ap.add_argument('--max-width', type=float, default=2.6)
 ap.add_argument('--hairline', type=float, default=0.6, help='strokes thinner than this (mm) become double running stitch')
 ap.add_argument('--min-highlight', type=float, default=0.8, help='fill in highlights narrower than this, mm')
 ap.add_argument('--open', type=float, default=0.3, help='grow small highlights by this much, mm')
-ap.add_argument('--overlap', type=float, default=0.5, help='how far a fill runs under darker colours, mm')
+ap.add_argument('--overlap', type=float, default=0.7, help='how far a fill runs under darker colours, mm')
+ap.add_argument('--ground-tolerance', type=float, default=60, help='colour distance still counted as fabric')
 ap.add_argument('--min-area', type=float, default=3.0, help='drop coloured fills smaller than this, mm2')
 a = ap.parse_args()
 
 rgb = np.asarray(Image.open(a.art).convert('RGB')).astype(float)
 lum = rgb @ np.array([.299, .587, .114])
 sat = rgb.max(axis=2) - rgb.min(axis=2)
-ground = (lum > 200) & (sat < 40)
+# the ground (fabric) is whatever colour the corners are: white paper, or a
+# coloured cloth when white is one of the threads
+corner = np.median(np.concatenate([rgb[:12, :12].reshape(-1, 3), rgb[:12, -12:].reshape(-1, 3), rgb[-12:, :12].reshape(-1, 3), rgb[-12:, -12:].reshape(-1, 3)]), axis=0)
+white_ground = corner.min() > 200
+ground = ((lum > 200) & (sat < 40)) if white_ground else (np.sqrt(((rgb - corner) ** 2).sum(axis=2)) < a.ground_tolerance)
 ys, xs = np.nonzero(~ground)
 x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
 S = a.width / (x1 - x0 + 1)                      # mm per pixel
@@ -51,23 +56,38 @@ px_of = lambda v: max(1, int(round(v / S)))
 if a.colors == 1:
     classes = [(lum < 140) & ~ground]; hexes = ['#0b0b0b']
 else:
-    data = rgb[~ground]
-    np.random.seed(7)
-    cent, _ = kmeans2(data[::7], a.colors, minit='++', seed=7)
+    # Seed the clusters from flat interior colour only. Anti-aliased rims are
+    # blends of two threads and would otherwise steal a cluster from a real one.
+    flat = ~ground
+    for dy, dx in ((0, 3), (3, 0), (0, -3), (-3, 0)):
+        flat &= np.abs(rgb - np.roll(rgb, (dy, dx), axis=(0, 1))).max(axis=2) < 14
+    data = rgb[flat]
+    bins, counts = np.unique((data // 24).astype(int), axis=0, return_counts=True)
+    seeds = []
+    for i in np.argsort(-counts):
+        c = bins[i] * 24 + 12
+        if counts[i] < len(data) * 0.002: break
+        if all(np.sqrt(((c - q) ** 2).sum()) > 55 for q in seeds): seeds.append(c.astype(float))
+        if len(seeds) == a.colors: break
+    if len(seeds) < a.colors: raise SystemExit(f'found only {len(seeds)} flat colours; lower --colors')
+    cent, _ = kmeans2(data[::5], np.array(seeds), minit='matrix')
     cent = cent[np.argsort(-(cent @ np.array([.299, .587, .114])))]          # light → dark
     d = ((rgb[:, :, None, :] - cent[None, None]) ** 2).sum(axis=3)
     cls = d.argmin(axis=2); cls[ground] = -1
     dark = a.colors - 1
     # anti-aliased rims between black and white read as a mid colour: a coloured
     # area must survive a small opening, otherwise its pixels go back to black/white
+    lost = np.zeros(cls.shape, bool)
     for k in range(a.colors - 1):
         m = cls == k
-        keep = ndi.binary_opening(m, iterations=px_of(0.22))
-        lost = m & ~keep
-        cls[lost & (lum < 120)] = dark; cls[lost & (lum >= 120)] = -1
+        lost |= m & ~ndi.binary_opening(m, iterations=px_of(0.22))
+    # hand each lost pixel to the nearest surviving neighbour (thread or fabric)
+    idx = ndi.distance_transform_edt(lost, return_distances=False, return_indices=True)
+    cls = cls[idx[0], idx[1]]
     classes = [cls == k for k in range(a.colors)]
     hexes = ['#%02x%02x%02x' % tuple(int(round(v)) for v in c) for c in cent]
     if cent[dark] @ np.array([.299, .587, .114]) < 45: hexes[dark] = '#0b0b0b'
+    if cent[0].min() > 225: hexes[0] = '#fbfaf5'
     # a lighter fill runs a little way under the darker colours next to it
     for k in range(a.colors - 1):
         darker = np.any(classes[k + 1:], axis=0)
@@ -92,7 +112,7 @@ def longest_path(sk):
     while p is not None: path.append(p); p = prev[p]
     return path
 
-def solid(comp):
+def solid(comp, keep_holes=True):
     """Outline plus highlights. A highlight too thin to stay open once thread
     spreads is filled in; small ones are opened up a little."""
     sl = ndi.find_objects(comp.astype(int))[0]
@@ -102,7 +122,7 @@ def solid(comp):
     keep = np.zeros_like(pad)
     for h in range(1, hn + 1):
         hm = holes == h
-        if ndi.distance_transform_edt(hm).max() * 2 * S < a.min_highlight: continue
+        if not keep_holes or ndi.distance_transform_edt(hm).max() * 2 * S < a.min_highlight: continue
         keep |= ndi.binary_dilation(hm, iterations=px_of(a.open)) if hm.sum() * S * S < 4 else hm
     polys = []
     for c in sorted(find_contours((filled & ~keep).astype(float), 0.5), key=len, reverse=True):
@@ -150,7 +170,20 @@ def ordered(strokes):
     return order
 
 P = lambda pts: [{'x': x, 'y': y} for x, y in pts]
-ops = []; summary = []
+ops = []; summary = []; highlights = []
+# On coloured cloth a highlight cannot be bare fabric: the darkest solids are
+# sewn whole and their highlights go on top, last, in the lightest thread.
+top_highlights = not white_ground and len(classes) > 1
+if top_highlights:
+    darkmask = classes[-1]
+    hl, hn = label(ndi.binary_fill_holes(darkmask) & ~darkmask, connectivity=2, return_num=True)
+    for h in range(1, hn + 1):
+        yy, xx = np.nonzero(hl == h)
+        if len(yy) * S * S < 0.4 or len(yy) * S * S > 14: continue
+        pts = np.stack([xx, yy], 1).astype(float); c = pts.mean(0)
+        vals, vecs = np.linalg.eigh(np.cov((pts - c).T))
+        major = vecs[:, 1]; L = max(1.5 / S, 3.4 * math.sqrt(vals[1])); Wd = min(2.4, max(1.0, 3.4 * math.sqrt(max(vals[0], 0)) * S))
+        highlights.append({'pts': [mm(*(c - major * L / 2)), mm(*c), mm(*(c + major * L / 2))], 'w': [round(Wd * .6, 2), round(Wd, 2), round(Wd * .6, 2)]})
 for k, mask in enumerate(classes):
     color = hexes[k]; darkest = k == len(classes) - 1
     lab, n = label(mask, connectivity=2, return_num=True)
@@ -162,13 +195,13 @@ for k, mask in enumerate(classes):
         if area < 0.5: continue
         if dt[comp].max() * 2 * S > a.blob:
             if not darkest and area < a.min_area: continue
-            polys = solid(comp)
+            polys = solid(comp, keep_holes=not (top_highlights and darkest))
             if polys: solids.append(polys)
         else: strokes += strokes_of(comp, dt)
     for i, polys in enumerate(solids):
         ops.append({'op': 'add_region', 'name': f'{color} fill {i + 1}', 'color': color, 'points': P(polys[0]),
                     **({'holes': [P(h) for h in polys[1:]]} if len(polys) > 1 else {}),
-                    'params': {'spacing': .38 if darkest else .42, 'angle': 90 if darkest else (35 + 70 * k) % 180, 'stitchType': 'auto'}})
+                    'params': {'spacing': .38 if darkest else .36 if (k == 0 and not white_ground) else .42, 'angle': 90 if darkest else (35 + 70 * k) % 180, 'stitchType': 'auto'}})
     for i, s in enumerate(ordered(strokes)):
         if s['mean'] < a.hairline:
             ops.append({'op': 'add_running', 'name': f'{color} line {i + 1}', 'color': color, 'points': P(s['pts']),
@@ -177,5 +210,9 @@ for k, mask in enumerate(classes):
             ops.append({'op': 'add_satin', 'name': f'{color} stroke {i + 1}', 'color': color, 'smooth': True,
                         'spine': P(s['pts']), 'width': s['w'], 'params': {'density': .4, 'pull': .05, 'underlay': True}})
     summary.append(f'{color}: {len(solids)} fills, {len(strokes)} strokes')
-json.dump({'name': a.name, 'mmPerPixel': S, 'colors': hexes, 'operations': ops}, open(a.out, 'w'))
+for i, h in enumerate(highlights):
+    ops.append({'op': 'add_satin', 'name': f'Highlight {i + 1}', 'color': hexes[0], 'spine': P(h['pts']), 'width': h['w'],
+                'params': {'density': .38, 'pull': 0, 'underlay': False}})
+if highlights: summary.append(f'{len(highlights)} highlights on top')
+json.dump({'name': a.name, 'mmPerPixel': S, 'colors': hexes, 'fabric': '#ffffff' if white_ground else '#%02x%02x%02x' % tuple(int(v) for v in corner), 'operations': ops}, open(a.out, 'w'))
 print(f'{a.width:.0f} x {H:.1f} mm, {S:.4f} mm/px | ' + ' | '.join(summary))

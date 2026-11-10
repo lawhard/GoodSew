@@ -8,6 +8,7 @@ import {operations} from '../js/samples/timi.js';
 import {operations as lineOps} from '../js/samples/timi-line.js';
 import {operations as brushOps} from '../js/samples/timi-brush.js';
 import {operations as threeOps} from '../js/samples/timi-three.js';
+import {operations as whiteOps,FABRIC as whiteFabric} from '../js/samples/timi-white.js';
 import {generateForObject} from '../js/stitches.js';
 const len=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 const wide=[[{x:10,y:10},{x:40,y:10}],[{x:10,y:40},{x:40,y:40}]];
@@ -82,4 +83,11 @@ test('hidden travel stays inside the shape and out of its holes',()=>{
  const inside=p=>p.x>=-.01&&p.x<=40.01&&p.y>=-.01&&p.y<=38.01&&!(p.x>8.2&&p.y>8.2&&p.y<29.8);
  for(const s of subs)for(const p of s)assert.ok(inside(p),'point in the C notch: '+JSON.stringify(p));
  for(let i=1;i<subs.length;i++){const a=subs[i-1].at(-1),b=subs[i][0];assert.ok(Math.hypot(a.x-b.x,a.y-b.y)<=3.01&&!subs[i]._trimBefore,'sections are linked');}
+});
+test('white-coat portrait: four threads on coloured cloth, highlights sewn last in white',()=>{
+ let id=0;const {objects}=prepareEdits([],whiteOps,()=>++id),compiled=compile(objects),qa=analyzeQuality(compiled);
+ assert.ok(qa.valid);assert.notEqual(whiteFabric,'#ffffff');
+ assert.deepEqual(compiled.colors.map(c=>c.color),['#fbfaf5',compiled.colors[1].color,compiled.colors[2].color,'#0b0b0b','#fbfaf5']);
+ assert.ok(compiled.bounds.w<=96&&compiled.bounds.h<=96);assert.ok(qa.maxLen<=9);assert.ok(compiled.plan.filter(s=>s.cmd==='trim').length<90);
+ assert.ok(objects.slice(-3).every(o=>o.color==='#fbfaf5'&&o.kind==='satin-rails'),'catchlights are the last objects');
 });
